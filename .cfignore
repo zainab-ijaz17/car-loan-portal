@@ -1,0 +1,8 @@
+node_modules/
+uploads/*
+.claude/
+_ds/
+*.dc.html
+Freight Rate System.html
+.thumbnail
+docker-compose.yml

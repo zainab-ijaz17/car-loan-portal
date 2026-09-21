@@ -1,0 +1,38 @@
+const path = require('path');
+const express = require('express');
+const { PORT } = require('./config');
+const { ensureSchema, seedIfEmpty } = require('./store');
+const seedData = require('./seedData');
+const authRoutes = require('./routes/auth');
+const vendorsRoutes = require('./routes/vendors');
+const dieselRoutes = require('./routes/diesel');
+const ratesRoutes = require('./routes/rates');
+const revisionsRoutes = require('./routes/revisions');
+const adminRoutes = require('./routes/admin');
+const notificationsRoutes = require('./routes/notifications');
+
+async function main() {
+  await ensureSchema();
+  await seedIfEmpty(seedData);
+
+  const app = express();
+  app.use(express.json());
+
+  app.use('/api/sap', authRoutes);
+  app.use('/api/sap', vendorsRoutes);
+  app.use('/api/sap', dieselRoutes);
+  app.use('/api/sap', ratesRoutes);
+  app.use('/api/sap', revisionsRoutes);
+  app.use('/api/sap', adminRoutes);
+  app.use('/api/sap', notificationsRoutes);
+  app.use(express.static(path.join(__dirname, '..', 'app')));
+
+  app.listen(PORT, () => {
+    console.log(`Freight Rate Portal listening on http://localhost:${PORT}`);
+  });
+}
+
+main().catch((err) => {
+  console.error('Failed to start:', err.message);
+  process.exit(1);
+});

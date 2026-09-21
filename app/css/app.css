@@ -1,0 +1,123 @@
+/* Portal-specific layout and states on top of nocturne.css. Everything here
+   still reads its values from the design-system tokens (var(--color-*) etc)
+   — this file adds structure and interaction states the component library
+   doesn't cover, it never re-defines a token. */
+
+body { margin: 0; background: var(--color-bg); }
+
+.muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.num { font-variant-numeric: tabular-nums; }
+.hd {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+/* — app shell — */
+.shell { min-height: 100vh; display: flex; }
+
+.sidebar {
+  width: 236px; flex: none; padding: 18px 14px;
+  border-right: 1px solid var(--color-divider);
+  display: flex; flex-direction: column; gap: 22px;
+}
+.sidebar-brand { font-family: var(--font-heading); font-weight: 500; font-size: 16px; line-height: 1.2; }
+.sidebar-sub { font-size: 11px; color: color-mix(in srgb, var(--color-text) 50%, transparent); margin-top: 2px; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-foot {
+  margin-top: auto; font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 40%, transparent); line-height: 1.5;
+}
+
+.rail-item {
+  display: flex; gap: 10px; align-items: baseline; padding: 8px 10px;
+  border-radius: var(--radius-md); cursor: pointer; font-size: 13px;
+  border: 1px solid transparent; background: none; text-align: left;
+  color: inherit; font: inherit; width: 100%;
+}
+.rail-item:hover { background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.rail-item.active {
+  background: var(--color-accent-900); border-color: var(--color-accent-700);
+  color: var(--color-accent-200);
+}
+.rail-item-num { width: 20px; flex: none; opacity: .6; font-size: 11px; }
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  display: flex; align-items: center; gap: 9px;
+  border-bottom: 1px solid var(--color-divider); padding: 12px 28px;
+}
+.topbar-title { font-family: var(--font-heading); font-weight: 500; font-size: 15px; margin-right: auto; }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--color-accent-800); color: var(--color-accent-100);
+  display: grid; place-items: center; font-size: 11px; flex: none;
+}
+.screen { padding: 26px 28px 60px; flex: 1; }
+.screen-wide { max-width: 1560px; }
+.screen-narrow { max-width: 1080px; }
+.screen-medium { max-width: 1180px; }
+
+/* — login — */
+.login-page {
+  min-height: 100vh; display: grid; place-items: center; background: var(--color-bg);
+}
+.login-card { width: min(360px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 18px; }
+.login-brand { font-family: var(--font-heading); font-weight: 500; font-size: 20px; }
+.login-form { display: flex; flex-direction: column; gap: 14px; }
+
+/* — states: loading / error / empty — */
+.state-block { padding: 40px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--color-divider); border-top-color: var(--color-accent);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-banner {
+  display: flex; gap: 10px; align-items: flex-start; margin-top: 18px;
+  padding: 11px 13px; border-radius: var(--radius-md);
+  border: 1px solid #b4576b; background: color-mix(in srgb, #b4576b 14%, transparent);
+  font-size: 13px;
+}
+.error-banner-dot { color: #e79aa8; flex: none; }
+.inline-error { color: #e79aa8; font-size: 12.5px; margin-top: 6px; }
+
+/* — toast — */
+#toast-root {
+  position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.toast {
+  padding: 10px 14px; border-radius: var(--radius-md); font-size: 13px;
+  background: var(--color-surface); box-shadow: var(--shadow-md); max-width: 340px;
+}
+.toast-error { box-shadow: var(--shadow-md), inset 0 0 0 1px #b4576b; }
+.toast-success { box-shadow: var(--shadow-md), inset 0 0 0 1px var(--color-accent); }
+
+/* — form fields laid out read-only (calculated values) — */
+.ro { border: 1px dashed var(--color-divider); border-radius: var(--radius-md); background: transparent; padding: 7px 10px; font-size: 14px; min-height: 36px; display: flex; align-items: center; }
+.ro-lab { font-size: 12px; color: color-mix(in srgb, var(--color-text) 55%, transparent); margin-bottom: 5px; display: flex; gap: 5px; align-items: center; }
+
+/* — editable table cells — */
+.cell-in {
+  width: 100%; background: transparent; border: 1px solid transparent;
+  border-radius: var(--radius-sm); color: var(--color-text); font: inherit;
+  font-size: 14px; padding: 3px 6px; text-align: right;
+}
+.cell-in:hover { border-color: var(--color-divider); background: var(--color-surface); }
+.cell-in:focus-visible { border-color: var(--color-accent); outline: none; background: var(--color-surface); }
+
+input[type=checkbox] { accent-color: var(--color-accent); width: 15px; height: 15px; }
+
+.table-scroll { overflow-x: auto; padding-bottom: 6px; }
+
+/* — misc layout helpers — */
+.row { display: flex; align-items: center; }
+.row-gap { display: flex; align-items: center; gap: 9px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.spread { display: flex; justify-content: space-between; align-items: center; }
+.end { display: flex; justify-content: flex-end; gap: 9px; }
+
+[hidden] { display: none !important; }

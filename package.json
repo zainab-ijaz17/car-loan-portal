@@ -1,0 +1,19 @@
+{
+  "name": "freight-price-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Freight Rate Portal — frontend plus the Express backend that proxies SAP login.",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "express": "^4.21.2",
+    "multer": "^2.4.0",
+    "pg": "^8.23.0"
+  }
+}

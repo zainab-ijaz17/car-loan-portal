@@ -1,0 +1,10 @@
+---
+applications:
+- name: freight-price-portal
+  memory: 256M
+  instances: 1
+  buildpacks:
+    - nodejs_buildpack
+  command: node server/index.js
+  env:
+    NODE_ENV: production
