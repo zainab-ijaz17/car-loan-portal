@@ -35,6 +35,7 @@ The letters say which screen or step the error came from; the text after `›` n
 | DSL-002 | Effective date not DD.MM.YYYY | Correct the date |
 | DSL-003 | Effective date earlier than the last confirmed price | Use a later date |
 | DSL-004 | Notification not attached | Attach it and wait for the upload |
+| DSL-005 | Draft could not be saved (empty or malformed) | Re-enter the details and save again |
 | UPL-001 | File is not PDF / JPG / PNG | Attach one of those formats |
 | UPL-002 | No file received | Choose the file again |
 | UPL-003 | File over 10 MB | Attach a smaller copy |

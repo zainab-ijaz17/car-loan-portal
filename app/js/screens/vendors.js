@@ -1,13 +1,14 @@
 import { getVendors } from '../api/vendorsApi.js';
-import { getDraft, updateDraft } from '../revisionDraft.js';
+import { getDraft, updateDraft, ensureDraftLoaded } from '../revisionDraft.js';
 import { returnedNoticeHtml } from '../components/returnedNotice.js';
 import { withAsyncState, escapeHtml, trimNum, isValidDisplayDate, dateField, wireDateFields, codedError, toastError } from '../ui.js';
 
 export const title = 'Select Vendors';
 
-export function mount(container) {
+export async function mount(container) {
+  await ensureDraftLoaded().catch(() => {});
   const draft = getDraft();
-  if (!draft) {
+  if (!draft?.confirmed) {
     location.hash = '#/diesel-price';
     return () => {};
   }

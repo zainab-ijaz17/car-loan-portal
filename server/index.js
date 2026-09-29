@@ -12,6 +12,7 @@ const adminRoutes = require('./routes/admin');
 const notificationsRoutes = require('./routes/notifications');
 const changeRequestsRoutes = require('./routes/changeRequests');
 const alertsRoutes = require('./routes/alerts');
+const draftsRoutes = require('./routes/drafts');
 const { sendError } = require('./errors');
 
 async function main() {
@@ -25,6 +26,7 @@ async function main() {
   app.use('/api/sap', vendorsRoutes);
   app.use('/api/sap', dieselRoutes);
   app.use('/api/sap', ratesRoutes);
+  app.use('/api/sap', draftsRoutes);
   app.use('/api/sap', revisionsRoutes);
   app.use('/api/sap', adminRoutes);
   app.use('/api/sap', notificationsRoutes);

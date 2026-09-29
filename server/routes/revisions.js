@@ -77,6 +77,8 @@ router.post('/revisions', requireActor, requireRole('Rate Maintainer'), handle('
       previousReturn: returned ? { revisionNo: returned.revisionNo, reason: returned.reason, returnedBy: returned.returnedBy, returnedOn: returned.returnedOn } : null,
     };
     db.returnedRevision = null;
+    // Submitted — the maintainer's saved draft has done its job.
+    await client.query('DELETE FROM revision_drafts WHERE employee_id = $1', [submittedBy.employeeId]);
     logAudit(db, 'revision_submitted', submittedBy, { revisionNo: sim.revisionNo, vendorIds: payload.vendorIds });
     await createAlert(client, {
       toRole: 'Approver',

@@ -155,3 +155,27 @@ CREATE TABLE IF NOT EXISTS sessions (
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS content BYTEA;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS mime_type TEXT;
 ALTER TABLE notifications ALTER COLUMN stored_name DROP NOT NULL;
+
+-- The audit log is append-only: entries can be added, never changed or
+-- removed — not even by the portal itself (store.js only ever INSERTs).
+CREATE OR REPLACE FUNCTION audit_log_append_only() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_log is append-only: % is not allowed', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS audit_log_no_change ON audit_log;
+CREATE TRIGGER audit_log_no_change BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION audit_log_append_only();
+DROP TRIGGER IF EXISTS audit_log_no_truncate ON audit_log;
+CREATE TRIGGER audit_log_no_truncate BEFORE TRUNCATE ON audit_log
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_log_append_only();
+
+-- Each maintainer's in-progress revision ("Save Draft", and saved
+-- automatically at each step), restored when they next sign in. Deleted
+-- when they submit it or discard it. Written directly by
+-- routes/drafts.js, never part of store.js's load/save.
+CREATE TABLE IF NOT EXISTS revision_drafts (
+  employee_id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

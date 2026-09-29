@@ -2,6 +2,7 @@ import { getSession, hasRole, clearSession } from '../session.js';
 import { escapeHtml, initials } from '../ui.js';
 import { mountAlerts, stopAlerts } from './alerts.js';
 import { logout } from '../api/authApi.js';
+import { forgetDraft } from '../revisionDraft.js';
 
 // `num` only on the maintainer's three-step revision flow, where the
 // order matters; everything else is just a place to go.
@@ -54,8 +55,9 @@ export function renderShell(appRoot, { activePath, screenTitle, roleLabel }) {
   appRoot.querySelectorAll('[data-nav]').forEach((btn) => {
     btn.addEventListener('click', () => { location.hash = '#' + btn.dataset.nav; });
   });
-  appRoot.querySelector('[data-action="logout"]').addEventListener('click', () => {
+  appRoot.querySelector('[data-action="logout"]').addEventListener('click', async () => {
     stopAlerts();
+    await forgetDraft(); // saves any unsaved draft change first, while still signed in
     logout().catch(() => {}); // ends it server-side; it expires on its own if this fails
     clearSession();
     location.hash = '#/login';

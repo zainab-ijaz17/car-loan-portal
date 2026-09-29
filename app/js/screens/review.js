@@ -1,13 +1,14 @@
 import { simulateRevision, submitForApproval } from '../api/revisionsApi.js';
-import { getDraft, clearDraft, updateDraft } from '../revisionDraft.js';
+import { getDraft, clearDraft, updateDraft, ensureDraftLoaded } from '../revisionDraft.js';
 import { returnedNoticeHtml } from '../components/returnedNotice.js';
 import { withAsyncState, escapeHtml, money, pct, toast, toastError, downloadCsv } from '../ui.js';
 
 export const title = 'Review Before / After';
 
-export function mount(container) {
+export async function mount(container) {
+  await ensureDraftLoaded().catch(() => {});
   const draft = getDraft();
-  if (!draft || !draft.vendorIds.length) {
+  if (!draft?.confirmed || !draft.vendorIds.length) {
     location.hash = '#/vendors';
     return () => {};
   }
@@ -216,7 +217,7 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
         vendorIds: draft.vendorIds,
         overrides,
       });
-      clearDraft();
+      await clearDraft();
       toast(`Revision ${result.revisionNo} submitted for approval.`, 'success');
       location.hash = '#/diesel-price';
     } catch (err) {

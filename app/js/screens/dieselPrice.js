@@ -1,10 +1,10 @@
 import { getCurrentDieselPrice } from '../api/dieselApi.js';
 import { getReturnedRevision } from '../api/revisionsApi.js';
 import { uploadNotification } from '../api/notificationsApi.js';
-import { getDraft, startDraft } from '../revisionDraft.js';
+import { getDraft, startDraft, updateDraft, ensureDraftLoaded, clearDraft, saveNow, getDraftSavedAt } from '../revisionDraft.js';
 import { returnedNoticeHtml } from '../components/returnedNotice.js';
 import {
-  withAsyncState, escapeHtml, priceStr, pct, daysBetween, parseDisplayDate, isValidDisplayDate,
+  withAsyncState, escapeHtml, priceStr, pct, daysBetween, parseDisplayDate, isValidDisplayDate, formatDateTime,
   dateField, wireDateFields, codedError, showInlineError, toastError, toast, openDialog, closeDialog,
 } from '../ui.js';
 
@@ -12,7 +12,7 @@ export const title = 'Enter Diesel Price';
 
 export function mount(container) {
   const controller = new AbortController();
-  const loader = () => Promise.all([getCurrentDieselPrice(), getReturnedRevision()]);
+  const loader = () => Promise.all([getCurrentDieselPrice(), getReturnedRevision(), ensureDraftLoaded()]);
   withAsyncState(container, loader, ([previous, returned]) => render(container, previous, returned), {
     loadingLabel: 'Loading current diesel price…',
   });
@@ -75,9 +75,10 @@ function render(container, previous, returned) {
 
         <div id="form-error" class="inline-error" hidden></div>
 
-        <div class="end" style="justify-content:flex-start;margin-top:22px">
+        <div class="end" style="justify-content:flex-start;align-items:center;margin-top:22px">
           <button class="btn btn-secondary" type="button" id="save-draft">Save Draft</button>
           <button class="btn btn-primary" type="button" id="open-confirm">Confirm</button>
+          <span class="muted" style="font-size:12px;margin-left:6px" id="draft-status"></span>
         </div>
       </div>
 
@@ -101,6 +102,34 @@ function render(container, previous, returned) {
   const daysSince = container.querySelector('#days-since');
   const errorEl = container.querySelector('#form-error');
   const notificationStatus = container.querySelector('#notification-status');
+  const draftStatus = container.querySelector('#draft-status');
+
+  function showDraftStatus() {
+    const at = getDraftSavedAt();
+    if (!getDraft() || !at) {
+      draftStatus.innerHTML = '';
+      return;
+    }
+    draftStatus.innerHTML = `Draft saved <span class="num">${escapeHtml(formatDateTime(at))}</span> · <button class="link-btn" id="discard-draft">Discard draft</button>`;
+    draftStatus.querySelector('#discard-draft').addEventListener('click', () => {
+      openDialog(`
+        <div class="dialog-title">Discard this draft?</div>
+        <div class="dialog-body">The saved diesel price, vendor selection and any rates you typed in are deleted. This can't be undone.</div>
+        <div class="dialog-actions">
+          <button class="btn btn-secondary" id="dlg-cancel">Keep draft</button>
+          <button class="btn btn-primary" id="dlg-confirm">Discard draft</button>
+        </div>
+      `);
+      document.getElementById('dlg-cancel').addEventListener('click', closeDialog);
+      document.getElementById('dlg-confirm').addEventListener('click', async () => {
+        await clearDraft();
+        closeDialog();
+        toast('Draft discarded.', 'info');
+        render(container, previous, returned);
+      });
+    });
+  }
+  showDraftStatus();
 
   // { id, originalName } once uploaded — this, not the file input, is what
   // "attached" means: the file has actually reached the server and has a
@@ -163,8 +192,26 @@ function render(container, previous, returned) {
     }
   });
 
-  container.querySelector('#save-draft').addEventListener('click', () => {
-    toast('Draft saved locally. It is not yet submitted.', 'info');
+  // Saves the form as it stands — even unfinished — without the checks
+  // Confirm runs; it's confirmed (and validated) later.
+  container.querySelector('#save-draft').addEventListener('click', async () => {
+    const fields = {
+      dieselPrice: form.price.value === '' ? null : Number(form.price.value),
+      dieselEffectiveDate: dateInput.value,
+      source: form.source.value,
+      notificationId: notification?.id ?? null,
+      notificationFileName: notification?.originalName ?? null,
+      remarks: form.remarks.value,
+      confirmed: false, // edited since any earlier Confirm — must be confirmed again
+    };
+    if (getDraft()) updateDraft(fields); else startDraft(fields);
+    try {
+      const at = await saveNow();
+      showDraftStatus();
+      toast(`Draft saved ${formatDateTime(at)}. It isn't submitted yet — it will be here next time you sign in.`, 'success', 6000);
+    } catch (err) {
+      toastError(err, 'Your draft could not be saved.');
+    }
   });
 
   function validate() {
@@ -211,6 +258,7 @@ function render(container, previous, returned) {
       startDraft({
         vendorIds: carry?.vendorIds || [],
         ...(carry?.returnedFrom ? { returnedFrom: carry.returnedFrom, effectiveDate: carry.effectiveDate, overrides: carry.overrides } : {}),
+        confirmed: true,
         dieselPrice: price,
         dieselEffectiveDate,
         source: form.source.value,

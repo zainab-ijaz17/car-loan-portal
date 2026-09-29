@@ -5,6 +5,10 @@
 // rateSnapshots, auditLog }
 // — loadDb/saveDb just translate that to/from real tables, so
 // rateEngine.js's calculation logic didn't need to change at all.
+//
+// saveDb writes only what changed since loadDb (row by row), and only
+// ever *adds* audit log entries — the audit_log table itself refuses
+// updates and deletes (see schema.sql).
 const fs = require('fs');
 const path = require('path');
 const { pool } = require('./db');
@@ -20,7 +24,7 @@ async function seedIfEmpty(seed) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await saveDb(client, seed);
+    await saveDb(client, seed, emptyBaseline());
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -54,8 +58,9 @@ async function withTransaction(fn) {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(727271)');
     const db = await loadDb(client);
+    const baseline = rowsOf(db);
     const result = await fn(db, client);
-    await saveDb(client, db);
+    await saveDb(client, db, baseline);
     await client.query('COMMIT');
     return result;
   } catch (err) {
@@ -116,6 +121,7 @@ async function loadDb(client) {
   stateRes.rows.forEach((r) => { state[r.key] = r.value; });
 
   const auditLog = auditRes.rows.map((a) => ({
+    id: a.id, // already stored — only entries without an id are new
     action: a.action,
     actor: a.actor,
     at: a.at.toISOString(),
@@ -136,50 +142,81 @@ async function loadDb(client) {
   };
 }
 
-// Wipes and re-inserts every table from `db` — the same "rewrite the whole
-// blob" approach the old JSON file used, just now inside a real
-// transaction. Fine at this app's data volume (a handful of vendors, tens
-// of revisions).
-async function saveDb(client, db) {
-  await client.query('DELETE FROM vendors');
-  await client.query('DELETE FROM rate_sheets');
-  await client.query('DELETE FROM revisions');
-  await client.query('DELETE FROM rate_snapshots');
-  await client.query('DELETE FROM app_state');
-  await client.query('DELETE FROM audit_log');
+// Each table as { key → row values }, in the column order of TABLES
+// below. Taken right after loadDb and again before saving; comparing the
+// two tells saveDb exactly which rows were added, changed or removed.
+const TABLES = {
+  vendors: { key: ['id'], cols: ['id', 'name', 'annexure', 'pass_through_pct', 'rounding_rule', 'stale', 'validity_start', 'validity_end'] },
+  rate_sheets: { key: ['vendor_id'], cols: ['vendor_id', 'title', 'annexure', 'cols', 'weights', 'rows'] },
+  revisions: { key: ['revision_no'], cols: ['revision_no', 'diesel_price', 'effective_date', 'factor', 'approved_by', 'approved_on', 'notification_id'] },
+  rate_snapshots: { key: ['vendor_id', 'revision_no'], cols: ['vendor_id', 'revision_no', 'rows', 'audit_rows'] },
+  app_state: { key: ['key'], cols: ['key', 'value'] },
+};
+// Parents before children when inserting (a rate sheet needs its vendor),
+// children before parents when deleting.
+const UPSERT_ORDER = ['vendors', 'rate_sheets', 'revisions', 'rate_snapshots', 'app_state'];
+const DELETE_ORDER = [...UPSERT_ORDER].reverse();
 
+function rowsOf(db) {
+  const tables = Object.fromEntries(UPSERT_ORDER.map((t) => [t, new Map()]));
+  const put = (table, values) => {
+    const keyLen = TABLES[table].key.length;
+    tables[table].set(JSON.stringify(values.slice(0, keyLen)), JSON.stringify(values));
+  };
   for (const v of db.vendors) {
-    await client.query(
-      'INSERT INTO vendors (id, name, annexure, pass_through_pct, rounding_rule, stale, validity_start, validity_end) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [v.id, v.name, v.annexure, v.passThroughPct, v.roundingRule, v.stale, v.validityStart ?? null, v.validityEnd ?? null]
-    );
+    put('vendors', [v.id, v.name, v.annexure, v.passThroughPct, v.roundingRule, v.stale, v.validityStart ?? null, v.validityEnd ?? null]);
   }
   for (const [vendorId, sheet] of Object.entries(db.rateSheets)) {
-    await client.query(
-      'INSERT INTO rate_sheets (vendor_id, title, annexure, cols, weights, rows) VALUES ($1,$2,$3,$4,$5,$6)',
-      [vendorId, sheet.title, sheet.annexure, JSON.stringify(sheet.cols), JSON.stringify(sheet.weights), JSON.stringify(sheet.rows)]
-    );
+    put('rate_sheets', [vendorId, sheet.title, sheet.annexure, sheet.cols, sheet.weights, sheet.rows]);
   }
   for (const [revNo, rev] of Object.entries(db.revisions)) {
-    await client.query(
-      'INSERT INTO revisions (revision_no, diesel_price, effective_date, factor, approved_by, approved_on, notification_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [Number(revNo), rev.dieselPrice, rev.effectiveDate, rev.factor, rev.approvedBy, rev.approvedOn, rev.notificationId ?? null]
-    );
+    put('revisions', [Number(revNo), rev.dieselPrice, rev.effectiveDate, rev.factor, rev.approvedBy, rev.approvedOn, rev.notificationId ?? null]);
   }
   for (const [vendorId, byRev] of Object.entries(db.rateSnapshots)) {
     for (const [revNo, snap] of Object.entries(byRev)) {
-      await client.query(
-        'INSERT INTO rate_snapshots (vendor_id, revision_no, rows, audit_rows) VALUES ($1,$2,$3,$4)',
-        [vendorId, Number(revNo), JSON.stringify(snap.rows), snap.auditRows ? JSON.stringify(snap.auditRows) : null]
-      );
+      put('rate_snapshots', [vendorId, Number(revNo), snap.rows, snap.auditRows ?? null]);
     }
   }
-  await client.query('INSERT INTO app_state (key, value) VALUES ($1,$2)', ['current_revision_no', JSON.stringify(db.currentRevisionNo)]);
-  await client.query('INSERT INTO app_state (key, value) VALUES ($1,$2)', ['pending_revision', JSON.stringify(db.pendingRevision)]);
-  await client.query('INSERT INTO app_state (key, value) VALUES ($1,$2)', ['returned_revision', JSON.stringify(db.returnedRevision ?? null)]);
+  put('app_state', ['current_revision_no', db.currentRevisionNo]);
+  put('app_state', ['pending_revision', db.pendingRevision]);
+  put('app_state', ['returned_revision', db.returnedRevision ?? null]);
+  return tables;
+}
 
-  const oldestFirst = [...db.auditLog].reverse();
-  for (const entry of oldestFirst) {
+function emptyBaseline() {
+  return Object.fromEntries(UPSERT_ORDER.map((t) => [t, new Map()]));
+}
+
+// Plain values go in as-is; arrays/objects are JSONB columns.
+function toParam(v) {
+  return v !== null && typeof v === 'object' ? JSON.stringify(v) : v;
+}
+
+async function saveDb(client, db, baseline) {
+  const current = rowsOf(db);
+
+  for (const table of UPSERT_ORDER) {
+    const { key, cols } = TABLES[table];
+    const updates = cols.filter((c) => !key.includes(c)).map((c) => `${c} = EXCLUDED.${c}`).join(', ');
+    const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})
+      ON CONFLICT (${key.join(', ')}) DO UPDATE SET ${updates}`;
+    for (const [k, row] of current[table]) {
+      if (baseline[table].get(k) === row) continue; // unchanged
+      await client.query(sql, JSON.parse(row).map(toParam));
+    }
+  }
+
+  for (const table of DELETE_ORDER) {
+    const { key } = TABLES[table];
+    const sql = `DELETE FROM ${table} WHERE ${key.map((c, i) => `${c} = $${i + 1}`).join(' AND ')}`;
+    for (const k of baseline[table].keys()) {
+      if (!current[table].has(k)) await client.query(sql, JSON.parse(k));
+    }
+  }
+
+  // Routes add entries with unshift (newest first); insert oldest first.
+  const newEntries = db.auditLog.filter((e) => e.id == null).reverse();
+  for (const entry of newEntries) {
     await client.query(
       'INSERT INTO audit_log (action, actor, at, details) VALUES ($1,$2,$3,$4)',
       [entry.action, JSON.stringify(entry.actor), entry.at, JSON.stringify(entry.details)]

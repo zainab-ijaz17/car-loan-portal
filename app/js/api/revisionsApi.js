@@ -67,6 +67,29 @@ export async function getPendingApproval() {
 }
 
 /**
+ * The signed-in maintainer's saved in-progress revision (see revisionDraft.js).
+ *
+ * Real endpoint: GET {API_BASE_URL}/revisions/draft
+ * Response: null | { data: object, savedAt: ISO timestamp }
+ */
+export async function getSavedDraft() {
+  return request('/revisions/draft');
+}
+
+/**
+ * Real endpoint: PUT {API_BASE_URL}/revisions/draft  { data }
+ * Response: { savedAt }
+ */
+export async function saveDraft(data) {
+  return request('/revisions/draft', { method: 'PUT', body: { data } });
+}
+
+/** Real endpoint: DELETE {API_BASE_URL}/revisions/draft */
+export async function deleteSavedDraft() {
+  return request('/revisions/draft', { method: 'DELETE' });
+}
+
+/**
  * The revision an approver last returned for correction, with their
  * comments, until it's resubmitted.
  *
