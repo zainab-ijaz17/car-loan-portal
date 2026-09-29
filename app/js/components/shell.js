@@ -1,13 +1,17 @@
 import { getSession, hasRole, clearSession } from '../session.js';
 import { escapeHtml, initials } from '../ui.js';
+import { mountAlerts, stopAlerts } from './alerts.js';
 
+// `num` only on the maintainer's three-step revision flow, where the
+// order matters; everything else is just a place to go.
 const NAV_ITEMS = [
   { path: '/diesel-price', num: '1', label: 'Enter diesel price', roles: ['Rate Maintainer'] },
   { path: '/vendors', num: '2', label: 'Select vendors', roles: ['Rate Maintainer'] },
   { path: '/review', num: '3', label: 'Review before / after', roles: ['Rate Maintainer'] },
-  { path: '/approve', num: '4', label: 'Approve and release', roles: ['Approver'] },
-  { path: '/lookup', num: '5', label: 'Rate lookup', roles: ['Rate Maintainer', 'Approver', 'Display'] },
-  { path: '/admin', num: '6', label: 'Master data', roles: ['Administrator'] },
+  { path: '/approve', label: 'Approve and release', roles: ['Approver'] },
+  { path: '/master-data-requests', label: 'Master data requests', roles: ['Approver'] },
+  { path: '/lookup', label: 'Rate lookup', roles: ['Rate Maintainer', 'Approver', 'Display'] },
+  { path: '/admin', label: 'Master data', roles: ['Administrator'] },
 ];
 
 export function renderShell(appRoot, { activePath, screenTitle, roleLabel }) {
@@ -24,17 +28,17 @@ export function renderShell(appRoot, { activePath, screenTitle, roleLabel }) {
         <nav class="sidebar-nav">
           ${items.map((item) => `
             <button class="rail-item${item.path === activePath ? ' active' : ''}" data-nav="${item.path}">
-              <span class="rail-item-num num">${item.num}</span>
+              <span class="rail-item-num num">${item.num || ''}</span>
               <span>${escapeHtml(item.label)}</span>
             </button>
           `).join('')}
         </nav>
-        <div class="sidebar-foot">Freight Rate Portal<br>Approval separation enforced</div>
       </aside>
       <main class="main">
         <header class="topbar">
           <div class="topbar-title">${escapeHtml(screenTitle || '')}</div>
           <span class="tag tag-neutral">${escapeHtml(roleLabel || '')}</span>
+          <div id="alerts-slot"></div>
           <div class="row-gap">
             <span style="font-size:13px">${escapeHtml(session?.name || '')}</span>
             <span class="avatar">${escapeHtml(session ? initials(session.name) : '')}</span>
@@ -50,7 +54,9 @@ export function renderShell(appRoot, { activePath, screenTitle, roleLabel }) {
     btn.addEventListener('click', () => { location.hash = '#' + btn.dataset.nav; });
   });
   appRoot.querySelector('[data-action="logout"]').addEventListener('click', () => {
+    stopAlerts();
     clearSession();
     location.hash = '#/login';
   });
+  mountAlerts(appRoot.querySelector('#alerts-slot'));
 }

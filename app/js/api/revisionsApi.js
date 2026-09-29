@@ -23,7 +23,7 @@ import { request } from './client.js';
  *       // (sum rounded once, by this vendor's rounding rule); bal = check value
  *     blocked: boolean
  *   }},
- *   totals: { vendorCount, rateLineCount, totalIncreasePkr }, blocked: boolean
+ *   totals: { vendorCount, rateLineCount }, blocked: boolean
  * }
  */
 export async function simulateRevision(payload) {
@@ -36,8 +36,8 @@ export async function simulateRevision(payload) {
  *
  * Real endpoint: POST {API_BASE_URL}/revisions
  * Request: {
- *   dieselPrice, dieselEffectiveDate, effectiveDate, fuelType, source,
- *   notificationFileName, remarks, vendorIds, submittedBy: { employeeId, name }
+ *   dieselPrice, dieselEffectiveDate, effectiveDate, source, notificationId,
+ *   notificationFileName, remarks, vendorIds, overrides, submittedBy: { employeeId, name }
  * }
  * `dieselEffectiveDate` is when the fuel price itself took effect;
  * `effectiveDate` is when the revised rates take effect (Section 5's
@@ -55,13 +55,30 @@ export async function submitForApproval(payload) {
  * Real endpoint: GET {API_BASE_URL}/revisions/pending
  * Response: null | {
  *   revisionNo, submittedBy, submittedOn, dieselPrice, previousDieselPrice,
- *   effectiveDate, fuelType, source, notificationFileName,
+ *   effectiveDate, fuelType, source, notificationFileName, remarks,
+ *   previousReturn: null | { revisionNo, reason, returnedBy, returnedOn },
  *   totals: { vendorCount, rateLineCount, upliftPct },
  *   lines: [{ vendor, dest, vehicle, currentRate, upliftAmt, newRate, changePct }]
  * }
  */
 export async function getPendingApproval() {
   return request('/revisions/pending');
+}
+
+/**
+ * The revision an approver last returned for correction, with their
+ * comments, until it's resubmitted.
+ *
+ * Real endpoint: GET {API_BASE_URL}/revisions/returned
+ * Response: null | {
+ *   revisionNo, reason, returnedBy: { employeeId, name }, returnedOn,
+ *   submittedBy, submittedOn,
+ *   draft: { dieselPrice, dieselEffectiveDate, effectiveDate, source,
+ *     notificationId, notificationFileName, remarks, vendorIds, overrides }
+ * }
+ */
+export async function getReturnedRevision() {
+  return request('/revisions/returned');
 }
 
 /**

@@ -93,3 +93,42 @@ CREATE TABLE IF NOT EXISTS audit_log (
   at TIMESTAMPTZ NOT NULL DEFAULT now(),
   details JSONB
 );
+
+-- In-app notifications ("Revision 23 approved", "returned for correction",
+-- "new master data request", …). Addressed either to one employee or to
+-- everyone holding a role; read_by tracks who has opened a role-wide one.
+-- actor_employee_id is whoever caused it, so they aren't notified of their
+-- own action. Like `notifications` above, written directly — never part
+-- of saveDb's wipe-and-reinsert.
+CREATE TABLE IF NOT EXISTS alerts (
+  id SERIAL PRIMARY KEY,
+  recipient_employee_id TEXT,
+  recipient_role TEXT,
+  actor_employee_id TEXT,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  link TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_by JSONB NOT NULL DEFAULT '[]'
+);
+
+-- Master data changes that need a Rate Approver's sign-off before they
+-- take effect: adding a vendor / destination / vehicle type, deleting a
+-- vendor / destination. Raised by an Administrator; approving one applies
+-- it to vendors/rate_sheets in the same transaction. Written directly,
+-- never part of saveDb's wipe-and-reinsert.
+CREATE TABLE IF NOT EXISTS change_requests (
+  id SERIAL PRIMARY KEY,
+  kind TEXT NOT NULL,
+  vendor_id TEXT,
+  payload JSONB NOT NULL,
+  summary TEXT NOT NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  requested_by JSONB NOT NULL,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_by JSONB,
+  decided_at TIMESTAMPTZ,
+  decision_note TEXT
+);

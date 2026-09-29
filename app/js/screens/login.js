@@ -1,7 +1,7 @@
 import { login } from '../api/authApi.js';
 import { setSession } from '../session.js';
 import { defaultRouteForSession } from '../router.js';
-import { escapeHtml } from '../ui.js';
+import { escapeHtml, showInlineError } from '../ui.js';
 
 export const title = 'Sign in';
 
@@ -57,8 +57,7 @@ function renderCredentialsStep(container, controller) {
         location.hash = defaultRouteForSession();
       }
     } catch (err) {
-      errorEl.textContent = err.message || 'Sign in failed.';
-      errorEl.hidden = false;
+      showInlineError(errorEl, err, 'Sign in failed.');
       submitBtn.disabled = false;
       submitBtn.textContent = 'Log in';
     }

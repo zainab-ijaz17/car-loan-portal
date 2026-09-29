@@ -10,6 +10,9 @@ const ratesRoutes = require('./routes/rates');
 const revisionsRoutes = require('./routes/revisions');
 const adminRoutes = require('./routes/admin');
 const notificationsRoutes = require('./routes/notifications');
+const changeRequestsRoutes = require('./routes/changeRequests');
+const alertsRoutes = require('./routes/alerts');
+const { sendError } = require('./errors');
 
 async function main() {
   await ensureSchema();
@@ -25,6 +28,11 @@ async function main() {
   app.use('/api/sap', revisionsRoutes);
   app.use('/api/sap', adminRoutes);
   app.use('/api/sap', notificationsRoutes);
+  app.use('/api/sap', changeRequestsRoutes);
+  app.use('/api/sap', alertsRoutes);
+  // Malformed JSON bodies and anything else Express itself rejects.
+  // eslint-disable-next-line no-unused-vars
+  app.use('/api/sap', (err, req, res, next) => sendError(res, err, `handling ${req.method} ${req.path}`));
   app.use(express.static(path.join(__dirname, '..', 'app')));
 
   app.listen(PORT, () => {

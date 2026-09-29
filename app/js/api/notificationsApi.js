@@ -22,11 +22,11 @@ export async function uploadNotification(file) {
   try {
     res = await fetch(CONFIG.API_BASE_URL + '/notifications', { method: 'POST', headers, body: formData });
   } catch (err) {
-    throw new ApiError('Could not reach the server. Check your connection and try again.', 0, err);
+    throw new ApiError('Could not reach the portal server. Check your connection and try again.', 0, { cause: err });
   }
 
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(data?.message || `Upload failed (${res.status}).`, res.status, data);
+  if (!res.ok) throw new ApiError(data?.message || `Upload failed (HTTP ${res.status}).`, res.status, data || { code: 'UPL-005', where: 'Notification attachment' });
   return data;
 }
 
@@ -44,7 +44,10 @@ export async function downloadNotification(id, fileName) {
   if (creds) headers.Authorization = 'Basic ' + btoa(`${creds.employeeId}:${creds.password}`);
 
   const res = await fetch(CONFIG.API_BASE_URL + `/notifications/${id}`, { headers });
-  if (!res.ok) throw new ApiError(`Could not download the attachment (${res.status}).`, res.status);
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(data?.message || `Could not download the attachment (HTTP ${res.status}).`, res.status, data || { code: 'UPL-004', where: 'Notification attachment' });
+  }
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

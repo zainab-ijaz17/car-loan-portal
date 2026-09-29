@@ -3,7 +3,30 @@
    — this file adds structure and interaction states the component library
    doesn't cover, it never re-defines a token. */
 
+/* Status colours the design system doesn't carry. Green is reserved for
+   the latest / final figure on a screen (new rates, the rate in effect,
+   the current revision, "approved"); amber for "needs your action". */
+:root {
+  --color-positive: #6fcf97;
+  --color-positive-bg: color-mix(in srgb, #6fcf97 14%, transparent);
+  --color-warning: #e8b86a;
+  --color-warning-bg: color-mix(in srgb, #e8b86a 12%, transparent);
+  --color-negative: #e79aa8;
+  --color-negative-line: #b4576b;
+}
+
 body { margin: 0; background: var(--color-bg); }
+
+.pos { color: var(--color-positive); }
+.tag-positive { background: var(--color-positive-bg); color: var(--color-positive); }
+.tag-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.tag-negative { background: color-mix(in srgb, var(--color-negative-line) 22%, transparent); color: var(--color-negative); }
+.row-current td { background: var(--color-positive-bg); }
+.row-current td.num { color: var(--color-positive); }
+.btn-danger { color: var(--color-negative); }
+.btn-danger:hover { background: color-mix(in srgb, var(--color-negative-line) 18%, transparent); }
+.link-btn { background: none; border: 0; padding: 0; color: var(--color-negative); font: inherit; font-size: 12px; cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
 
 .muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
 .num { font-variant-numeric: tabular-nums; }
@@ -23,10 +46,6 @@ body { margin: 0; background: var(--color-bg); }
 .sidebar-brand { font-family: var(--font-heading); font-weight: 500; font-size: 16px; line-height: 1.2; }
 .sidebar-sub { font-size: 11px; color: color-mix(in srgb, var(--color-text) 50%, transparent); margin-top: 2px; }
 .sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
-.sidebar-foot {
-  margin-top: auto; font-size: 11px;
-  color: color-mix(in srgb, var(--color-text) 40%, transparent); line-height: 1.5;
-}
 
 .rail-item {
   display: flex; gap: 10px; align-items: baseline; padding: 8px 10px;
@@ -76,11 +95,64 @@ body { margin: 0; background: var(--color-bg); }
 .error-banner {
   display: flex; gap: 10px; align-items: flex-start; margin-top: 18px;
   padding: 11px 13px; border-radius: var(--radius-md);
-  border: 1px solid #b4576b; background: color-mix(in srgb, #b4576b 14%, transparent);
+  border: 1px solid var(--color-negative-line); background: color-mix(in srgb, var(--color-negative-line) 14%, transparent);
   font-size: 13px;
 }
-.error-banner-dot { color: #e79aa8; flex: none; }
-.inline-error { color: #e79aa8; font-size: 12.5px; margin-top: 6px; }
+.error-banner-dot { color: var(--color-negative); flex: none; }
+.inline-error { color: var(--color-negative); font-size: 12.5px; margin-top: 6px; }
+/* "Error DSL-003 · Enter diesel price › Effective date" under a message */
+.error-ref { display: block; margin-top: 3px; font-size: 11.5px; letter-spacing: .02em; opacity: .75; font-variant-numeric: tabular-nums; }
+
+/* — "returned for correction" notice — */
+.notice-warning {
+  border: 1px solid var(--color-warning); background: var(--color-warning-bg);
+  border-radius: var(--radius-md); padding: 14px 16px; font-size: 13px;
+}
+.notice-warning .notice-title { font-weight: 600; color: var(--color-warning); margin-bottom: 6px; }
+.notice-quote {
+  margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-bg) 60%, transparent); white-space: pre-wrap; font-size: 14px; line-height: 1.5;
+}
+
+/* — date field: DD.MM.YYYY text + a button opening the native picker — */
+.date-field { position: relative; display: flex; align-items: center; }
+.date-field > input[type=text] { flex: 1; min-width: 0; padding-right: 32px; }
+.date-field-compact > input[type=text] { width: 132px; flex: none; padding-right: 26px; text-align: left; }
+.date-btn {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  background: none; border: 0; padding: 4px; cursor: pointer; line-height: 0;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent); border-radius: var(--radius-sm);
+}
+.date-btn:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.date-native { position: absolute; right: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: 0; padding: 0; }
+
+/* — notifications bell — */
+.alerts { position: relative; }
+.alerts-bell { position: relative; padding: 6px 8px; line-height: 0; }
+.alerts-badge {
+  position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: var(--color-warning); color: #1b1b1b;
+  font-size: 10px; line-height: 16px; font-weight: 600;
+}
+.alerts-panel {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 900;
+  width: min(380px, calc(100vw - 32px)); max-height: 70vh; overflow-y: auto; padding: 12px;
+}
+.alerts-readall { font-size: 12px; padding: 2px 6px; }
+.alert-item {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  background: none; border: 0; border-left: 3px solid transparent; color: inherit; font: inherit;
+  padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer;
+}
+.alert-item:hover { background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.alert-item.unread { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+.alert-item.unread .alert-title { font-weight: 600; }
+.alert-positive { border-left-color: var(--color-positive); }
+.alert-negative { border-left-color: var(--color-negative-line); }
+.alert-warning { border-left-color: var(--color-warning); }
+.alert-title { font-size: 13px; }
+.alert-body { font-size: 12px; color: color-mix(in srgb, var(--color-text) 70%, transparent); line-height: 1.45; }
+.alert-time { font-size: 11px; color: color-mix(in srgb, var(--color-text) 45%, transparent); }
 
 /* — toast — */
 #toast-root {
@@ -91,8 +163,8 @@ body { margin: 0; background: var(--color-bg); }
   padding: 10px 14px; border-radius: var(--radius-md); font-size: 13px;
   background: var(--color-surface); box-shadow: var(--shadow-md); max-width: 340px;
 }
-.toast-error { box-shadow: var(--shadow-md), inset 0 0 0 1px #b4576b; }
-.toast-success { box-shadow: var(--shadow-md), inset 0 0 0 1px var(--color-accent); }
+.toast-error { box-shadow: var(--shadow-md), inset 0 0 0 1px var(--color-negative-line); }
+.toast-success { box-shadow: var(--shadow-md), inset 0 0 0 1px var(--color-positive); }
 
 /* — form fields laid out read-only (calculated values) — */
 .ro { border: 1px dashed var(--color-divider); border-radius: var(--radius-md); background: transparent; padding: 7px 10px; font-size: 14px; min-height: 36px; display: flex; align-items: center; }

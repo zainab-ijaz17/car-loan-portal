@@ -1,8 +1,11 @@
 import { getVendorOptions } from '../api/vendorsApi.js';
 import * as rateLookupApi from '../api/rateLookupApi.js';
-import { withAsyncState, escapeHtml, money, priceStr, toast, isoToDisplayDate } from '../ui.js';
+import {
+  withAsyncState, escapeHtml, money, priceStr, isValidDisplayDate, dateField, wireDateFields,
+  codedError, toastError, errorBanner, downloadCsv,
+} from '../ui.js';
 
-export const title = 'Screen 5 · Rate Lookup';
+export const title = 'Rate Lookup';
 
 export function mount(container) {
   const controller = new AbortController();
@@ -39,7 +42,7 @@ function render(container, vendors) {
 async function renderLookupTab(body, vendors) {
   body.innerHTML = `
     <div class="grid-4" style="padding:14px 16px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-sm)">
-      <div class="field"><label>Date <span class="muted">· defaults to today</span></label><input class="input num" id="lk-date" type="date"></div>
+      <div class="field"><label for="lk-date">Date <span class="muted">· blank = today</span></label>${dateField('lk-date')}</div>
       <div class="field"><label>Vendor</label>
         <select class="input" id="lk-vendor">${vendors.map((v) => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('')}</select>
       </div>
@@ -58,6 +61,7 @@ async function renderLookupTab(body, vendors) {
   const dateInput = body.querySelector('#lk-date');
   const resultsEl = body.querySelector('#lk-results');
   const searchBtn = body.querySelector('#lk-search');
+  wireDateFields(body);
 
   // Listeners are wired up before the vehicle-types fetch below, not after
   // it — attaching them post-await left the Search button dead (no
@@ -67,22 +71,31 @@ async function renderLookupTab(body, vendors) {
   async function loadVehicleTypes() {
     searchBtn.disabled = true;
     vehicleSelect.innerHTML = '<option>Loading…</option>';
-    const types = await rateLookupApi.getVehicleTypes(vendorSelect.value);
-    vehicleSelect.innerHTML = types.map((t) => `<option>${escapeHtml(t)}</option>`).join('');
-    searchBtn.disabled = false;
+    try {
+      const types = await rateLookupApi.getVehicleTypes(vendorSelect.value);
+      vehicleSelect.innerHTML = types.map((t) => `<option>${escapeHtml(t)}</option>`).join('');
+      searchBtn.disabled = false;
+    } catch (err) {
+      vehicleSelect.innerHTML = '';
+      toastError(err, 'Could not load vehicle types.');
+    }
   }
   vendorSelect.addEventListener('change', loadVehicleTypes);
 
   searchBtn.addEventListener('click', async () => {
     if (!destInput.value.trim()) {
-      toast('Enter a destination to search.', 'error');
+      toastError(codedError('LKP-001', 'Enter a destination (or part of its name) to search.', 'Destination'));
+      return;
+    }
+    if (dateInput.value && !isValidDisplayDate(dateInput.value)) {
+      toastError(codedError('LKP-002', 'Enter the date as DD.MM.YYYY, or leave it blank for today.', 'Date'));
       return;
     }
     const params = {
       vendorId: vendorSelect.value,
       destination: destInput.value,
       vehicleType: vehicleSelect.value,
-      date: dateInput.value ? isoToDisplayDate(dateInput.value) : '',
+      date: dateInput.value,
     };
     resultsEl.innerHTML = '<div class="state-block"><div class="spinner"></div></div>';
     try {
@@ -92,7 +105,7 @@ async function renderLookupTab(body, vendors) {
       ]);
       renderLookupResults(resultsEl, rate, history);
     } catch (err) {
-      resultsEl.innerHTML = `<div class="error-banner"><span class="error-banner-dot">●</span><span>${escapeHtml(err.message || 'Lookup failed.')}</span></div>`;
+      resultsEl.innerHTML = errorBanner(err, 'Lookup failed.');
     }
   });
 
@@ -101,18 +114,18 @@ async function renderLookupTab(body, vendors) {
 
 function renderLookupResults(container, rate, history) {
   if (!rate) {
-    container.innerHTML = '<p class="muted">No matching rate found for that lane.</p>';
+    container.innerHTML = '<p class="muted">No rate found for that vendor, destination and vehicle type on that date. Check the spelling of the destination, or try another vehicle type.</p>';
     return;
   }
   container.innerHTML = `
     <div style="display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);gap:34px;align-items:start">
       <div class="card elev-md" style="padding:20px">
-        <div class="num" style="font-size:44px;line-height:1.05">PKR ${money(rate.rate)}</div>
+        <div class="num pos" style="font-size:44px;line-height:1.05">PKR ${money(rate.rate)}</div>
         <div style="font-size:14px">${escapeHtml(rate.destination)} · ${escapeHtml(rate.vehicleType)} · ${escapeHtml(rate.vendorName)}</div>
         <div class="card-meta" style="font-size:12px">Annexure ${escapeHtml(rate.annexure)} · Revision ${rate.revisionNo}</div>
         <div style="height:1px;background:var(--color-divider);margin:4px 0"></div>
         <div style="font-size:12.5px;color:color-mix(in srgb,var(--color-text) 70%,transparent);line-height:1.6">
-          Valid <span class="num">${escapeHtml(rate.validFrom)}</span> – ${escapeHtml(rate.validTo)}<br>
+          Valid <span class="num">${escapeHtml(rate.validFrom)}</span> – ${rate.validTo === 'current' ? '<span class="pos">current</span>' : `<span class="num">${escapeHtml(rate.validTo)}</span>`}<br>
           Approved by ${escapeHtml(rate.approvedBy)} on <span class="num">${escapeHtml(rate.approvedOn)}</span>
         </div>
       </div>
@@ -122,7 +135,7 @@ function renderLookupResults(container, rate, history) {
           <thead><tr><th style="text-align:right">Revision</th><th style="text-align:right">Diesel price</th><th style="text-align:right">Rate</th><th style="text-align:right">Valid from</th><th style="text-align:right">Valid to</th></tr></thead>
           <tbody>
             ${history.map((h) => `
-              <tr>
+              <tr class="${h.validTo === 'current' ? 'row-current' : ''}">
                 <td class="num" style="text-align:right">${h.revisionNo}</td>
                 <td class="num" style="text-align:right">${priceStr(h.dieselPrice)}</td>
                 <td class="num" style="text-align:right">${money(h.rate)}</td>
@@ -156,22 +169,24 @@ async function renderAnnexTab(body, vendors) {
   const revisionSelect = body.querySelector('#ax-revision');
   const axBody = body.querySelector('#ax-body');
 
-  body.querySelector('#ax-export').addEventListener('click', () => toast('Export to Excel isn’t wired to a SAP endpoint yet.', 'info'));
+  let annex = null;
+  body.querySelector('#ax-export').addEventListener('click', () => { if (annex) exportAnnexure(annex); });
   body.querySelector('#ax-print').addEventListener('click', () => window.print());
 
   async function loadAnnexure() {
     axBody.innerHTML = '<div class="state-block"><div class="spinner"></div></div>';
     try {
-      const annex = await rateLookupApi.getAnnexure(vendorSelect.value, Number(revisionSelect.value));
+      annex = null;
+      annex = await rateLookupApi.getAnnexure(vendorSelect.value, Number(revisionSelect.value));
       renderAnnexure(axBody, annex);
     } catch (err) {
-      axBody.innerHTML = `<div class="error-banner"><span class="error-banner-dot">●</span><span>${escapeHtml(err.message || 'Could not load annexure.')}</span></div>`;
+      axBody.innerHTML = errorBanner(err, 'Could not load annexure.');
     }
   }
 
   async function loadRevisions() {
     const revisions = await rateLookupApi.getRevisionOptions();
-    revisionSelect.innerHTML = revisions.map((r) => `<option value="${r}">${r}</option>`).join('');
+    revisionSelect.innerHTML = revisions.map((r, i) => `<option value="${r}">${r}${i === 0 ? ' (current)' : ''}</option>`).join('');
   }
 
   vendorSelect.addEventListener('change', loadAnnexure);
@@ -184,25 +199,45 @@ function renderAnnexure(container, annex) {
   container.innerHTML = `
     <div style="padding:18px 20px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-sm)">
       <div style="font-family:var(--font-heading);font-size:21px">${escapeHtml(annex.title)}</div>
-      <div class="num" style="font-size:13px;color:color-mix(in srgb,var(--color-text) 70%,transparent);margin-top:3px">Annexure ${escapeHtml(annex.annexure)} · Revision ${annex.revisionNo} · w.e.f. ${escapeHtml(annex.effectiveDate)}</div>
-      <div class="num" style="font-size:13px;color:color-mix(in srgb,var(--color-text) 70%,transparent)">Based on HSD at PKR ${priceStr(annex.dieselPrice)} per litre</div>
+      <div class="num" style="font-size:13px;color:color-mix(in srgb,var(--color-text) 70%,transparent);margin-top:3px">Annexure ${escapeHtml(annex.annexure)} · Revision ${annex.revisionNo} · w.e.f. ${escapeHtml(annex.effectiveDate)} ${annex.isCurrent ? '<span class="tag tag-positive" style="margin-left:6px">Current</span>' : ''}</div>
+      <div class="num" style="font-size:13px;color:color-mix(in srgb,var(--color-text) 70%,transparent)">Based on diesel at PKR ${priceStr(annex.dieselPrice)} per litre</div>
       <div class="num" style="font-size:13px;color:color-mix(in srgb,var(--color-text) 70%,transparent)">Approved by ${escapeHtml(annex.approvedBy)} on ${escapeHtml(annex.approvedOn)}</div>
     </div>
     <table class="table" style="margin-top:18px;max-width:820px">
       <thead><tr>
         <th style="width:60px">S.No</th><th>Destination</th>
-        ${annex.cols.map((c) => `<th style="text-align:right">${escapeHtml(c)}</th>`).join('')}
+        ${annex.cols.map((c) => `<th style="text-align:right${annex.isCurrent ? ';color:var(--color-positive)' : ''}">${escapeHtml(c)}</th>`).join('')}
       </tr></thead>
       <tbody>
         ${annex.rows.map((r) => `
           <tr>
             <td class="num">${r.no}</td>
             <td>${escapeHtml(r.dest)}</td>
-            ${r.cells.map((c) => `<td class="num" style="text-align:right">${c == null ? '—' : money(c)}</td>`).join('')}
+            ${r.cells.map((c) => `<td class="num${annex.isCurrent ? ' pos' : ''}" style="text-align:right">${c == null ? '—' : money(c)}</td>`).join('')}
           </tr>
         `).join('')}
       </tbody>
     </table>
-    <p class="muted" style="font-size:11.5px;margin-top:12px">Vehicle columns follow the vendor's annexure — one to three columns. Changing the revision redraws the table and the header block.</p>
+    ${annex.terms?.length ? `
+      <div style="max-width:820px;margin-top:22px">
+        <div class="hd" style="margin-bottom:8px">General terms &amp; conditions</div>
+        <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.6">
+          ${annex.terms.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}
+        </ol>
+      </div>` : ''}
   `;
+}
+
+function exportAnnexure(annex) {
+  const rows = [
+    [annex.title],
+    [`Annexure ${annex.annexure}`, `Revision ${annex.revisionNo}`, `w.e.f. ${annex.effectiveDate}`],
+    [`Based on diesel at PKR ${priceStr(annex.dieselPrice)} per litre`],
+    [`Approved by ${annex.approvedBy} on ${annex.approvedOn}`],
+    [],
+    ['S.No', 'Destination', ...annex.cols],
+    ...annex.rows.map((r) => [r.no, r.dest, ...r.cells.map((c) => (c == null ? '' : c))]),
+  ];
+  if (annex.terms?.length) rows.push([], ['General terms & conditions'], ...annex.terms.map((t, i) => [`${i + 1}.`, t]));
+  downloadCsv(`${annex.vendorName} - Annexure ${annex.annexure.replace(/\//g, '-')} - Revision ${annex.revisionNo}.csv`, rows);
 }

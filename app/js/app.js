@@ -6,6 +6,7 @@ import * as review from './screens/review.js';
 import * as approve from './screens/approve.js';
 import * as lookup from './screens/lookup.js';
 import * as admin from './screens/admin.js';
+import * as changeRequests from './screens/changeRequests.js';
 
 registerRoute('/login', login, { public: true });
 registerRoute('/diesel-price', dieselPrice, { roles: ['Rate Maintainer'] });
@@ -14,5 +15,6 @@ registerRoute('/review', review, { roles: ['Rate Maintainer'] });
 registerRoute('/approve', approve, { roles: ['Approver'] });
 registerRoute('/lookup', lookup, { roles: ['Rate Maintainer', 'Approver', 'Display', 'Administrator'] });
 registerRoute('/admin', admin, { roles: ['Administrator'] });
+registerRoute('/master-data-requests', changeRequests, { roles: ['Approver'] });
 
 startRouter();

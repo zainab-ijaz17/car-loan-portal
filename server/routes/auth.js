@@ -1,6 +1,7 @@
 const express = require('express');
 const { verifyEmployeeCredentials } = require('../sfClient');
 const { assignmentFor } = require('../roles');
+const { fail, sendError } = require('../errors');
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ const router = express.Router();
 router.post('/login', async (req, res) => {
   const { employeeId, password } = req.body || {};
   if (!employeeId || !password) {
-    return res.status(400).json({ message: 'Employee ID and password are required.' });
+    return sendError(res, fail('AUTH-002', 'Enter both your employee ID and password.', { status: 400 }));
   }
 
   let valid;
@@ -19,11 +20,11 @@ router.post('/login', async (req, res) => {
     valid = await verifyEmployeeCredentials(employeeId, password);
   } catch (err) {
     console.error('SF login error:', err.message);
-    return res.status(502).json({ message: 'Could not reach SAP SuccessFactors. Try again in a moment.' });
+    return sendError(res, fail('AUTH-004', 'Could not reach SAP SuccessFactors to check your login. Try again in a moment.', { status: 502 }));
   }
 
   if (!valid) {
-    return res.status(401).json({ message: 'Invalid employee ID or password.' });
+    return sendError(res, fail('AUTH-003', 'The employee ID or password is incorrect.', { status: 401 }));
   }
 
   // SuccessFactors' login check has no display-name or role field, so both

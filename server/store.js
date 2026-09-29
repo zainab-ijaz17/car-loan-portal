@@ -1,7 +1,8 @@
 // Postgres-backed persistence for the portal's own data (vendors, rate
 // sheets, revisions, workflow state, audit log). Routes work against the
 // same plain-object shape the app has always used — { vendors, rateSheets,
-// revisions, currentRevisionNo, pendingRevision, rateSnapshots, auditLog }
+// revisions, currentRevisionNo, pendingRevision, returnedRevision,
+// rateSnapshots, auditLog }
 // — loadDb/saveDb just translate that to/from real tables, so
 // rateEngine.js's calculation logic didn't need to change at all.
 const fs = require('fs');
@@ -127,6 +128,9 @@ async function loadDb(client) {
     revisions,
     currentRevisionNo: state.current_revision_no ?? null,
     pendingRevision: state.pending_revision ?? null,
+    // The last revision an approver sent back for correction, with their
+    // comments — shown to maintainers until it's resubmitted.
+    returnedRevision: state.returned_revision ?? null,
     rateSnapshots,
     auditLog,
   };
@@ -172,6 +176,7 @@ async function saveDb(client, db) {
   }
   await client.query('INSERT INTO app_state (key, value) VALUES ($1,$2)', ['current_revision_no', JSON.stringify(db.currentRevisionNo)]);
   await client.query('INSERT INTO app_state (key, value) VALUES ($1,$2)', ['pending_revision', JSON.stringify(db.pendingRevision)]);
+  await client.query('INSERT INTO app_state (key, value) VALUES ($1,$2)', ['returned_revision', JSON.stringify(db.returnedRevision ?? null)]);
 
   const oldestFirst = [...db.auditLog].reverse();
   for (const entry of oldestFirst) {

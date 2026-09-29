@@ -2,11 +2,12 @@ const express = require('express');
 const { withDb } = require('../store');
 const { rateLineCount } = require('../rateEngine');
 const { requireActor } = require('../middleware/auth');
+const { handle } = require('../errors');
 
 const router = express.Router();
 
 // GET /vendors and GET /vendors?fields=id,name — see app/js/api/vendorsApi.js
-router.get('/vendors', requireActor, async (req, res) => {
+router.get('/vendors', requireActor, handle('loading vendors', async (req, res) => {
   const result = await withDb(async (db) => {
     if (req.query.fields === 'id,name') {
       return db.vendors.map((v) => ({ id: v.id, name: v.name }));
@@ -19,6 +20,6 @@ router.get('/vendors', requireActor, async (req, res) => {
     }));
   });
   res.json(result);
-});
+}));
 
 module.exports = router;

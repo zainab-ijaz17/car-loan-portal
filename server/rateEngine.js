@@ -4,16 +4,18 @@
 // reading/writing a persisted `db` (server/store.js) instead of an
 // in-browser object that reset on reload.
 
-function notFound(message) {
-  const err = new Error(message);
-  err.status = 404;
-  return err;
-}
+const { fail } = require('./errors');
 
 function vendorById(db, id) {
   const v = db.vendors.find((v) => v.id === id);
-  if (!v) throw notFound(`Unknown vendor "${id}".`);
+  if (!v) throw fail('VND-003', `Vendor "${id}" was not found. It may have been deleted — reload the page and pick it again.`, { status: 404, field: 'Vendor' });
   return v;
+}
+
+// Whole numbers stay whole ("40"), anything else keeps up to 2 decimals
+// ("37.5") — never a padded "40.00".
+function trimNum(n, maxDecimals = 2) {
+  return Number(n).toLocaleString('en-US', { maximumFractionDigits: maxDecimals, useGrouping: false });
 }
 
 // 0 for a vendor whose pricing_model isn't 'lane' (category / dedicated
@@ -71,7 +73,7 @@ function buildSimulation(db, { dieselPrice, effectiveDate, vendorIds, overrides 
   const vendors = vendorIds.map((id) => {
     const v = vendorById(db, id);
     const upliftPct = overallUpliftPct * (v.passThroughPct / 100);
-    return { id: v.id, name: v.name, upliftPct, upliftBasis: `${v.passThroughPct.toFixed(2)}% pass-through of ${overallUpliftPct.toFixed(2)}%` };
+    return { id: v.id, name: v.name, upliftPct, upliftBasis: `${trimNum(v.passThroughPct)}% pass-through of ${trimNum(overallUpliftPct)}%` };
   });
 
   const worksheets = {};
@@ -79,10 +81,6 @@ function buildSimulation(db, { dieselPrice, effectiveDate, vendorIds, overrides 
 
   const blocked = Object.values(worksheets).some((w) => w.blocked);
   const rateLineTotal = vendorIds.reduce((sum, id) => sum + rateLineCount(db, id), 0);
-  const totalIncreasePkr = Object.values(worksheets).reduce(
-    (sum, w) => sum + w.rows.reduce((rowSum, r) => rowSum + r.inc.reduce((a, v) => a + (v ?? 0), 0), 0),
-    0
-  );
 
   return {
     revisionNo: db.currentRevisionNo + 1,
@@ -90,9 +88,21 @@ function buildSimulation(db, { dieselPrice, effectiveDate, vendorIds, overrides 
     overallUpliftPct,
     vendors: vendors.map((v) => ({ ...v, blocked: worksheets[v.id].blocked })),
     worksheets,
-    totals: { vendorCount: vendorIds.length, rateLineCount: rateLineTotal, totalIncreasePkr },
+    totals: { vendorCount: vendorIds.length, rateLineCount: rateLineTotal },
     blocked,
   };
+}
+
+// Every date in the portal is DD.MM.YYYY — stored, sent and shown.
+function isValidDMY(str) {
+  if (typeof str !== 'string' || !/^\d{2}\.\d{2}\.\d{4}$/.test(str)) return false;
+  const [d, m, y] = str.split('.').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+}
+
+function formatDMY(date) {
+  return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`;
 }
 
 function parseDMY(ddmmyyyy) {
@@ -102,8 +112,7 @@ function parseDMY(ddmmyyyy) {
 
 function subtractOneDay(ddmmyyyy) {
   const [d, m, y] = ddmmyyyy.split('.').map(Number);
-  const date = new Date(y, m - 1, d - 1);
-  return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`;
+  return formatDMY(new Date(y, m - 1, d - 1));
 }
 
 // The revision in effect on `dateStr` (DD.MM.YYYY), or the current revision
@@ -129,17 +138,22 @@ function rateAtRevision(db, vendorId, destName, colIndex, revNo) {
   return currentRate == null ? null : roundByRule(currentRate * db.revisions[revNo].factor, 'Nearest 100');
 }
 
+// Local date, not toISOString()'s UTC one — which is still "yesterday"
+// for the first five hours of every day in Pakistan.
 function today() {
-  return new Date().toISOString().slice(0, 10).split('-').reverse().join('.');
+  return formatDMY(new Date());
 }
 
 module.exports = {
   vendorById,
+  trimNum,
   rateLineCount,
   roundByRule,
   computeWorksheet,
   buildSimulation,
   parseDMY,
+  isValidDMY,
+  formatDMY,
   subtractOneDay,
   revisionCoveringDate,
   rateAtRevision,

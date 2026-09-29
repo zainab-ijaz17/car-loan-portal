@@ -2,14 +2,17 @@ const express = require('express');
 const { withDb } = require('../store');
 const { requireActor } = require('../middleware/auth');
 const {
-  vendorById, revisionCoveringDate, rateAtRevision, subtractOneDay, roundByRule,
+  vendorById, revisionCoveringDate, rateAtRevision, subtractOneDay, roundByRule, isValidDMY,
 } = require('../rateEngine');
+const { fail, handle } = require('../errors');
+const generalTerms = require('../generalTerms');
 
 const router = express.Router();
 
 // GET /rates/lookup?vendorId=&destination=&vehicleType=&date= — see app/js/api/rateLookupApi.js
-router.get('/rates/lookup', requireActor, async (req, res) => {
+router.get('/rates/lookup', requireActor, handle('looking up the rate', async (req, res) => {
   const { date, vendorId, destination, vehicleType } = req.query;
+  if (date && !isValidDMY(date)) throw fail('LKP-002', 'Enter the date as DD.MM.YYYY, or leave it blank for today.', { field: 'Date' });
 
   const result = await withDb(async (db) => {
     let v;
@@ -48,10 +51,10 @@ router.get('/rates/lookup', requireActor, async (req, res) => {
   });
 
   res.json(result);
-});
+}));
 
 // GET /rates/history?vendorId=&destination=&vehicleType= — see app/js/api/rateLookupApi.js
-router.get('/rates/history', requireActor, async (req, res) => {
+router.get('/rates/history', requireActor, handle('loading the rate history', async (req, res) => {
   const { vendorId, destination, vehicleType } = req.query;
 
   const history = await withDb(async (db) => {
@@ -79,80 +82,70 @@ router.get('/rates/history', requireActor, async (req, res) => {
   });
 
   res.json(history);
-});
+}));
 
 // GET /vendors/:vendorId/vehicle-types — see app/js/api/rateLookupApi.js
-router.get('/vendors/:vendorId/vehicle-types', requireActor, async (req, res) => {
-  try {
-    const cols = await withDb(async (db) => {
-      const sheet = db.rateSheets[req.params.vendorId];
-      if (!sheet) {
-        const err = new Error(`Unknown vendor "${req.params.vendorId}".`);
-        err.status = 404;
-        throw err;
-      }
-      return sheet.cols;
-    });
-    res.json(cols);
-  } catch (err) {
-    res.status(err.status || 500).json({ message: err.message });
-  }
-});
+router.get('/vendors/:vendorId/vehicle-types', requireActor, handle('loading vehicle types', async (req, res) => {
+  res.json(await withDb(async (db) => {
+    vendorById(db, req.params.vendorId);
+    return db.rateSheets[req.params.vendorId].cols;
+  }));
+}));
 
 // GET /revisions/options — see app/js/api/rateLookupApi.js
-router.get('/revisions/options', requireActor, async (req, res) => {
+router.get('/revisions/options', requireActor, handle('loading revisions', async (req, res) => {
   const options = await withDb(async (db) => Object.keys(db.revisions).map(Number).sort((a, b) => b - a));
   res.json(options);
-});
+}));
 
 // GET /vendors/:vendorId/annexure?revisionNo= — see app/js/api/rateLookupApi.js
-router.get('/vendors/:vendorId/annexure', requireActor, async (req, res) => {
+router.get('/vendors/:vendorId/annexure', requireActor, handle('loading the annexure', async (req, res) => {
   const { vendorId } = req.params;
   const revisionNo = Number(req.query.revisionNo);
 
-  try {
-    const result = await withDb(async (db) => {
-      const v = vendorById(db, vendorId);
-      const sheet = db.rateSheets[vendorId];
-      const rev = db.revisions[revisionNo];
-      if (!rev) {
-        const err = new Error(`Unknown revision ${revisionNo}.`);
-        err.status = 404;
-        throw err;
-      }
+  const result = await withDb(async (db) => {
+    const v = vendorById(db, vendorId);
+    const sheet = db.rateSheets[vendorId];
+    const rev = db.revisions[revisionNo];
+    if (!rev) throw fail('LKP-003', `Revision ${req.query.revisionNo} does not exist. Pick one from the list.`, { status: 404, field: 'Revision' });
 
-      const snapshotEntry = db.rateSnapshots[vendorId]?.[revisionNo];
-      const snapshot = snapshotEntry?.rows;
-      const auditRows = snapshotEntry?.auditRows;
-      const rows = (snapshot || sheet.rows).map((row, i) => ({
-        no: i + 1,
-        dest: row[0],
-        cells: row.slice(1).map((val) => (val == null ? null : snapshot ? val : roundByRule(val * rev.factor, 'Nearest 100'))),
-        // Section 6's audit requirement: the base rate and unrounded
-        // adjusted rate a published cell was computed from, where known
-        // (every revision approved through this app has it; the two
-        // pre-existing seed revisions only have the scalar approximation
-        // above, so there's nothing to trace for those).
-        audit: auditRows?.[i] ? { base: auditRows[i].base, unrounded: auditRows[i].sum } : null,
-      }));
+    const snapshotEntry = db.rateSnapshots[vendorId]?.[revisionNo];
+    const snapshot = snapshotEntry?.rows;
+    const auditRows = snapshotEntry?.auditRows;
+    const rows = (snapshot || sheet.rows).map((row, i) => ({
+      no: i + 1,
+      dest: row[0],
+      // Padded to today's columns: a vehicle type added after this
+      // revision simply has no rate in it.
+      cells: sheet.cols.map((_, j) => {
+        const val = row[j + 1];
+        if (val == null) return null;
+        return snapshot ? val : roundByRule(val * rev.factor, 'Nearest 100');
+      }),
+      // Section 6's audit requirement: the base rate and unrounded
+      // adjusted rate a published cell was computed from, where known
+      // (every revision approved through this app has it; the two
+      // pre-existing seed revisions only have the scalar approximation
+      // above, so there's nothing to trace for those).
+      audit: auditRows?.[i] ? { base: auditRows[i].base, unrounded: auditRows[i].sum } : null,
+    }));
 
-      return {
-        title: sheet.title,
-        annexure: sheet.annexure,
-        cols: sheet.cols,
-        vendorName: v.name,
-        revisionNo,
-        dieselPrice: rev.dieselPrice,
-        effectiveDate: rev.effectiveDate,
-        approvedBy: rev.approvedBy,
-        approvedOn: rev.approvedOn,
-        rows,
-      };
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(err.status || 500).json({ message: err.message });
-  }
-});
+    return {
+      title: sheet.title,
+      annexure: sheet.annexure,
+      cols: sheet.cols,
+      vendorName: v.name,
+      revisionNo,
+      dieselPrice: rev.dieselPrice,
+      effectiveDate: rev.effectiveDate,
+      approvedBy: rev.approvedBy,
+      approvedOn: rev.approvedOn,
+      isCurrent: revisionNo === db.currentRevisionNo,
+      terms: [...generalTerms.all, ...(generalTerms.byAnnexure[sheet.annexure] || [])],
+      rows,
+    };
+  });
+  res.json(result);
+}));
 
 module.exports = router;

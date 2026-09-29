@@ -22,4 +22,8 @@ function assignmentFor(employeeId) {
   return ROSTER[employeeId] || { name: employeeId, roles: [DEFAULT_ROLE] };
 }
 
-module.exports = { assignmentFor };
+function hasAssignedRole(employeeId, role) {
+  return assignmentFor(employeeId).roles.includes(role);
+}
+
+module.exports = { assignmentFor, hasAssignedRole };

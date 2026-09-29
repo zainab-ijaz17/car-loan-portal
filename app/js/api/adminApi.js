@@ -1,5 +1,8 @@
 import { request } from './client.js';
 
+// Adding/deleting vendors, destinations and vehicle types isn't here —
+// those are requests a Rate Approver signs off, see changeRequestsApi.js.
+
 /**
  * Full vendor + agreement records for master-data maintenance
  * (Administrator only — same shape as vendorsApi.getVendors()).
@@ -24,21 +27,6 @@ export async function updateAgreement(vendorId, patch) {
 }
 
 /**
- * Registers a new vendor with its agreement terms and one starting rate
- * line — Section 3's "space for adding additional vendors."
- *
- * Real endpoint: POST {API_BASE_URL}/admin/vendors
- * Request: {
- *   name, annexure, passThroughPct, roundingRule, validityStart?, validityEnd?,
- *   firstDestination, firstVehicleType, firstWeight, firstBaseRate
- * }
- * Response: the created vendor record
- */
-export async function addVendor(payload) {
-  return request('/admin/vendors', { method: 'POST', body: payload });
-}
-
-/**
  * A vendor's live rate sheet, so the admin screen can show which
  * destinations/vehicle types already exist before adding to them.
  *
@@ -47,20 +35,6 @@ export async function addVendor(payload) {
  */
 export async function getRateSheet(vendorId) {
   return request(`/admin/vendors/${vendorId}/rate-sheet`);
-}
-
-/**
- * Adds a new destination row to a vendor's rate sheet — Section 3's
- * "space for adding additional destination rows." This is master-data
- * maintenance, not a revision: it takes effect immediately, with no
- * simulate/approve step.
- *
- * Real endpoint: POST {API_BASE_URL}/admin/vendors/{vendorId}/destinations
- * Request:  { destination: string, baseRates: (number|null)[] }  // aligned to the sheet's existing cols
- * Response: the updated rate sheet
- */
-export async function addDestination(vendorId, payload) {
-  return request(`/admin/vendors/${vendorId}/destinations`, { method: 'POST', body: payload });
 }
 
 /**

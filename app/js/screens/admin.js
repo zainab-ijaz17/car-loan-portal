@@ -1,9 +1,14 @@
 import * as adminApi from '../api/adminApi.js';
-import { withAsyncState, escapeHtml, toast, openDialog, closeDialog, isoToDisplayDate, displayToIsoDate } from '../ui.js';
+import { listRequests, raiseRequest } from '../api/changeRequestsApi.js';
+import {
+  withAsyncState, escapeHtml, toast, toastError, openDialog, closeDialog, trimNum, formatDateTime,
+  isValidDisplayDate, dateField, wireDateFields, codedError, showInlineError, errorBanner,
+} from '../ui.js';
 
-export const title = 'Screen 6 · Master Data';
+export const title = 'Master Data';
 
 const ROUNDING_RULES = ['Nearest 100', 'Nearest 50', 'None'];
+const STATUS_TAG = { pending: 'tag-warning', approved: 'tag-positive', rejected: 'tag-negative' };
 
 export function mount(container) {
   const controller = new AbortController();
@@ -11,28 +16,33 @@ export function mount(container) {
   return () => { controller.abort(); closeDialog(); };
 }
 
-function load(container) {
-  withAsyncState(container, adminApi.getVendors, (vendors) => render(container, vendors), {
+function load(container, keepVendorId) {
+  const loader = () => Promise.all([adminApi.getVendors(), listRequests()]);
+  withAsyncState(container, loader, ([vendors, requests]) => render(container, vendors, requests, keepVendorId), {
     loadingLabel: 'Loading vendors and agreements…',
   });
 }
 
-function render(container, vendors) {
+function pendingFor(requests, kind, match) {
+  return requests.find((r) => r.status === 'pending' && r.kind === kind && match(r.payload));
+}
+
+function render(container, vendors, requests, keepVendorId) {
   container.innerHTML = `
     <div class="screen-medium">
       <h3 style="margin-bottom:3px">Master data</h3>
-      <p class="muted" style="font-size:13px">Vendors, agreements, destinations and vehicle types. No release rights — revisions still go through the approval workflow.</p>
+      <p class="muted" style="font-size:13px">Agreement terms and base rates save as you edit. New or deleted vendors, destinations and vehicle types are sent to a Rate Approver and only take effect once approved.</p>
 
       <div class="spread" style="margin-top:20px">
         <div class="hd">Vendors &amp; agreements</div>
-        <button class="btn btn-secondary" id="add-vendor-btn">Add vendor</button>
+        <button class="btn btn-secondary" id="add-vendor-btn">Request new vendor</button>
       </div>
       <table class="table" style="margin-top:10px">
         <thead><tr>
           <th>Vendor</th><th>Annexure</th>
           <th style="text-align:right">Pass-through %</th><th>Rounding rule</th>
           <th>Valid from</th><th>Valid to</th>
-          <th style="text-align:right">Rate lines</th><th style="text-align:right">Last revised</th>
+          <th style="text-align:right">Rate lines</th><th style="text-align:right">Last revised</th><th></th>
         </tr></thead>
         <tbody id="vendor-rows"></tbody>
       </table>
@@ -40,43 +50,54 @@ function render(container, vendors) {
       <div class="hd" style="margin-top:34px">Destinations &amp; vehicle types</div>
       <div class="field" style="width:280px;margin-top:10px">
         <label for="sheet-vendor">Vendor</label>
-        <select class="input" id="sheet-vendor">${vendors.map((v) => `<option value="${v.id}">${escapeHtml(v.name)}</option>`).join('')}</select>
+        <select class="input" id="sheet-vendor">${vendors.map((v) => `<option value="${v.id}" ${v.id === keepVendorId ? 'selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}</select>
       </div>
       <div id="sheet-body" style="margin-top:16px"></div>
+
+      <div class="hd" style="margin-top:38px">Requests sent for approval</div>
+      <div id="request-list" style="margin-top:10px"></div>
     </div>
   `;
 
   const rowsEl = container.querySelector('#vendor-rows');
   const sheetVendorSelect = container.querySelector('#sheet-vendor');
   const sheetBody = container.querySelector('#sheet-body');
+  const reload = () => load(container, sheetVendorSelect.value);
 
   function rowHtml(v) {
+    const pendingDelete = pendingFor(requests, 'delete_vendor', (p) => p.vendorId === v.id);
     return `
       <tr data-id="${v.id}">
         <td>${escapeHtml(v.name)}</td>
         <td class="num">${escapeHtml(v.annexure)}</td>
-        <td style="text-align:right"><input class="cell-in num" style="text-align:right;width:80px" type="number" min="0" max="100" step="0.01" value="${v.passThroughPct}" data-field="passThroughPct"></td>
+        <td style="text-align:right"><input class="cell-in num" style="text-align:right;width:70px" type="number" min="0" max="100" step="0.01" value="${trimNum(v.passThroughPct)}" data-field="passThroughPct"></td>
         <td>
           <select class="cell-in" data-field="roundingRule">
             ${ROUNDING_RULES.map((r) => `<option ${r === v.roundingRule ? 'selected' : ''}>${r}</option>`).join('')}
           </select>
         </td>
-        <td><input class="cell-in num" type="date" value="${v.validityStart ? displayToIsoDate(v.validityStart) : ''}" data-field="validityStart"></td>
-        <td><input class="cell-in num" type="date" value="${v.validityEnd ? displayToIsoDate(v.validityEnd) : ''}" data-field="validityEnd"></td>
+        <td>${dateField(`vs-${v.id}`, { value: v.validityStart, compact: true, attrs: 'data-field="validityStart"' })}</td>
+        <td>${dateField(`ve-${v.id}`, { value: v.validityEnd, compact: true, attrs: 'data-field="validityEnd"' })}</td>
         <td class="num" style="text-align:right">${v.rateLineCount}</td>
         <td class="num" style="text-align:right">${escapeHtml(v.lastRevisedDate)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${pendingDelete
+            ? `<span class="tag tag-warning" title="Request #${pendingDelete.id}">Deletion pending</span>`
+            : `<button class="link-btn" data-delete-vendor="${v.id}">Request deletion</button>`}
+        </td>
       </tr>
     `;
   }
   rowsEl.innerHTML = vendors.map(rowHtml).join('');
+  wireDateFields(rowsEl);
 
   async function saveAgreement(vendorId, field, value) {
     try {
       await adminApi.updateAgreement(vendorId, { [field]: value });
       toast('Agreement updated.', 'success');
     } catch (err) {
-      toast(err.message || 'Could not save that change.', 'error');
-      load(container);
+      toastError(err, 'Could not save that change.');
+      reload();
     }
   }
 
@@ -85,35 +106,72 @@ function render(container, vendors) {
     if (!field) return;
     const vendorId = e.target.closest('tr').dataset.id;
     let value = e.target.value;
-    if (field === 'passThroughPct') value = Number(value);
-    else if (field === 'validityStart' || field === 'validityEnd') value = value ? isoToDisplayDate(value) : '';
+    if (field === 'passThroughPct') {
+      if (value === '' || !(Number(value) >= 0 && Number(value) <= 100)) {
+        toastError(codedError('MD-001', 'Pass-through % must be a number from 0 to 100.', 'Pass-through %'));
+        return;
+      }
+      value = Number(value);
+    } else if (field === 'validityStart' || field === 'validityEnd') {
+      if (value && !isValidDisplayDate(value)) {
+        toastError(codedError('MD-003', `Enter "${field === 'validityStart' ? 'Valid from' : 'Valid to'}" as DD.MM.YYYY.`, field === 'validityStart' ? 'Valid from' : 'Valid to'));
+        return;
+      }
+    }
     saveAgreement(vendorId, field, value);
   });
 
-  container.querySelector('#add-vendor-btn').addEventListener('click', () => openAddVendorDialog(container));
+  rowsEl.addEventListener('click', (e) => {
+    const id = e.target.dataset.deleteVendor;
+    if (!id) return;
+    const v = vendors.find((x) => x.id === id);
+    openDeleteDialog({
+      title: `Request deletion of ${v.name}`,
+      body: `Removes the vendor and its rate sheet (${v.rateLineCount} rate lines) from the portal once a Rate Approver approves it. Past revisions stay on record.`,
+      kind: 'delete_vendor',
+      payload: { vendorId: id },
+      onDone: reload,
+    });
+  });
+
+  container.querySelector('#add-vendor-btn').addEventListener('click', () => openAddVendorDialog(reload));
 
   async function loadSheet() {
     sheetBody.innerHTML = '<div class="state-block"><div class="spinner"></div></div>';
+    const vendorId = sheetVendorSelect.value;
     try {
-      const sheet = await adminApi.getRateSheet(sheetVendorSelect.value);
-      renderSheet(sheetBody, sheetVendorSelect.value, sheet, () => loadSheet());
+      const sheet = await adminApi.getRateSheet(vendorId);
+      renderSheet(sheetBody, vendorId, sheet, requests, reload, loadSheet);
     } catch (err) {
-      sheetBody.innerHTML = `<div class="error-banner"><span class="error-banner-dot">●</span><span>${escapeHtml(err.message || 'Could not load rate sheet.')}</span></div>`;
+      sheetBody.innerHTML = errorBanner(err, 'Could not load rate sheet.');
     }
   }
   sheetVendorSelect.addEventListener('change', loadSheet);
-  loadSheet();
+  if (vendors.length) loadSheet();
+  else sheetBody.innerHTML = '<p class="muted">No vendors yet.</p>';
+
+  renderRequestList(container.querySelector('#request-list'), requests, vendors);
 }
 
-function renderSheet(container, vendorId, sheet, onChanged) {
+function renderSheet(container, vendorId, sheet, requests, reload, reloadSheet) {
+  const waiting = requests.filter((r) => r.status === 'pending' && r.vendorId === vendorId && r.kind !== 'delete_vendor');
   container.innerHTML = `
-    <table class="table" style="max-width:820px">
+    ${waiting.length ? `
+      <div class="notice-warning" style="max-width:820px;margin-bottom:14px;padding:10px 14px">
+        <div class="notice-title" style="margin-bottom:2px">Waiting for approval</div>
+        ${waiting.map((r) => `<div style="font-size:13px">#${r.id} · ${escapeHtml(r.summary)}</div>`).join('')}
+      </div>` : ''}
+    <div class="table-scroll">
+    <table class="table" style="max-width:${Math.max(820, 300 + sheet.cols.length * 130)}px">
       <thead><tr>
         <th style="width:60px">S.No</th><th>Destination</th>
-        ${sheet.cols.map((c) => `<th style="text-align:right">${escapeHtml(c)}</th>`).join('')}
+        ${sheet.cols.map((c, j) => `<th style="text-align:right">${escapeHtml(c)}<div class="muted" style="text-transform:none;letter-spacing:0">${escapeHtml(sheet.weights[j] || '')}</div></th>`).join('')}
+        <th></th>
       </tr></thead>
       <tbody id="sheet-rows">
-        ${sheet.rows.map((row, i) => `
+        ${sheet.rows.map((row, i) => {
+          const pendingDelete = pendingFor(requests, 'delete_destination', (p) => p.vendorId === vendorId && p.destination === row[0]);
+          return `
           <tr data-dest="${escapeHtml(row[0])}">
             <td class="num">${i + 1}</td>
             <td>${escapeHtml(row[0])}</td>
@@ -122,11 +180,19 @@ function renderSheet(container, vendorId, sheet, onChanged) {
                 <input class="cell-in num" style="text-align:right;width:100px" type="number" min="0" step="1" value="${v == null ? '' : v}" data-rate>
               </td>
             `).join('')}
+            <td style="text-align:right;white-space:nowrap">
+              ${pendingDelete ? '<span class="tag tag-warning">Deletion pending</span>' : '<button class="link-btn" data-delete-dest>Request deletion</button>'}
+            </td>
           </tr>
-        `).join('')}
+        `;
+        }).join('')}
       </tbody>
     </table>
-    <button class="btn btn-secondary" id="add-dest-btn" style="margin-top:14px">Add destination</button>
+    </div>
+    <div class="row-gap" style="margin-top:14px">
+      <button class="btn btn-secondary" id="add-dest-btn">Request new destination</button>
+      <button class="btn btn-secondary" id="add-vehicle-btn">Request new vehicle type</button>
+    </div>
   `;
 
   async function saveRow(tr) {
@@ -136,96 +202,226 @@ function renderSheet(container, vendorId, sheet, onChanged) {
       await adminApi.updateDestinationRates(vendorId, { destination, baseRates });
       toast('Rate updated.', 'success');
     } catch (err) {
-      toast(err.message || 'Could not save that rate.', 'error');
-      onChanged();
+      toastError(err, 'Could not save that rate.');
+      reloadSheet();
     }
   }
 
-  container.querySelector('#sheet-rows').addEventListener('change', (e) => {
+  const rowsEl = container.querySelector('#sheet-rows');
+  rowsEl.addEventListener('change', (e) => {
     if (!e.target.matches('input[data-rate]')) return;
     saveRow(e.target.closest('tr'));
   });
+  rowsEl.addEventListener('click', (e) => {
+    if (!e.target.matches('[data-delete-dest]')) return;
+    const destination = e.target.closest('tr').dataset.dest;
+    openDeleteDialog({
+      title: `Request deletion of "${destination}"`,
+      body: `Removes this destination and its ${sheet.cols.length} rate(s) from ${escapeHtml(sheet.title)} once a Rate Approver approves it. Past revisions stay on record.`,
+      kind: 'delete_destination',
+      payload: { vendorId, destination },
+      onDone: reload,
+    });
+  });
 
-  container.querySelector('#add-dest-btn').addEventListener('click', () => openAddDestinationDialog(vendorId, sheet, onChanged));
+  container.querySelector('#add-dest-btn').addEventListener('click', () => openAddDestinationDialog(vendorId, sheet, reload));
+  container.querySelector('#add-vehicle-btn').addEventListener('click', () => openAddVehicleTypeDialog(vendorId, sheet, reload));
 }
 
-function openAddVendorDialog(container) {
+function renderRequestList(container, requests, vendors) {
+  if (!requests.length) {
+    container.innerHTML = '<p class="muted" style="font-size:13px">No requests yet.</p>';
+    return;
+  }
+  container.innerHTML = `
+    <table class="table">
+      <thead><tr><th style="width:50px">#</th><th>Request</th><th>Requested</th><th>Status</th><th>Decision</th></tr></thead>
+      <tbody>
+        ${requests.map((r) => `
+          <tr>
+            <td class="num">${r.id}</td>
+            <td>${escapeHtml(r.summary)}${r.reason ? `<div class="muted" style="font-size:12px">Reason: ${escapeHtml(r.reason)}</div>` : ''}</td>
+            <td class="num" style="white-space:nowrap">${escapeHtml(formatDateTime(r.requestedAt))}<div class="muted" style="font-size:12px">${escapeHtml(r.requestedBy?.name || '')}</div></td>
+            <td><span class="tag ${STATUS_TAG[r.status] || 'tag-neutral'}">${escapeHtml(r.status === 'pending' ? 'Waiting for approval' : r.status[0].toUpperCase() + r.status.slice(1))}</span></td>
+            <td style="font-size:12.5px">${r.decidedAt ? `${escapeHtml(r.decidedBy?.name || '')} · <span class="num">${escapeHtml(formatDateTime(r.decidedAt))}</span>${r.decisionNote ? `<div class="muted">${escapeHtml(r.decisionNote)}</div>` : ''}` : '<span class="muted">—</span>'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// Shared wiring for every "Request …" dialog: collects the payload, sends
+// it, and shows the server's coded error inline if it's refused.
+function wireRequestDialog({ kind, collect, errorId, onDone, successText }) {
+  document.getElementById('dlg-cancel').addEventListener('click', closeDialog);
+  const confirmBtn = document.getElementById('dlg-confirm');
+  confirmBtn.addEventListener('click', async () => {
+    const errorEl = document.getElementById(errorId);
+    errorEl.hidden = true;
+    let collected;
+    try {
+      collected = collect();
+    } catch (err) {
+      showInlineError(errorEl, err);
+      return;
+    }
+    confirmBtn.disabled = true;
+    try {
+      const created = await raiseRequest(kind, collected.payload, collected.reason);
+      closeDialog();
+      toast(`Request #${created.id} sent to the Rate Approver. ${successText}`, 'success', 6000);
+      onDone();
+    } catch (err) {
+      showInlineError(errorEl, err);
+      confirmBtn.disabled = false;
+    }
+  });
+}
+
+const APPROVAL_NOTE = '<div class="dialog-body" style="font-size:12.5px;opacity:.7">This is sent to a Rate Approver. Nothing changes until they approve it; you will be notified either way.</div>';
+
+function openAddVendorDialog(onDone) {
   openDialog(`
-    <div class="dialog-title">Add vendor</div>
+    <div class="dialog-title">Request new vendor</div>
+    ${APPROVAL_NOTE}
     <div class="grid-2">
-      <div class="field"><label>Vendor name</label><input class="input" id="av-name"></div>
-      <div class="field"><label>Annexure reference</label><input class="input" id="av-annexure" placeholder="e.g. B/11"></div>
-      <div class="field"><label>Pass-through %</label><input class="input num" id="av-pass" type="number" min="0" max="100" step="0.01" value="40"></div>
-      <div class="field"><label>Rounding rule</label>
+      <div class="field"><label for="av-name">Vendor name</label><input class="input" id="av-name"></div>
+      <div class="field"><label for="av-annexure">Annexure reference</label><input class="input" id="av-annexure" placeholder="e.g. B/11"></div>
+      <div class="field"><label for="av-pass">Pass-through %</label><input class="input num" id="av-pass" type="number" min="0" max="100" step="0.01" value="40"></div>
+      <div class="field"><label for="av-round">Rounding rule</label>
         <select class="input" id="av-round">${ROUNDING_RULES.map((r) => `<option>${r}</option>`).join('')}</select>
       </div>
-      <div class="field"><label>Valid from <span class="muted">· optional</span></label><input class="input num" id="av-valid-from" type="date"></div>
-      <div class="field"><label>Valid to <span class="muted">· optional</span></label><input class="input num" id="av-valid-to" type="date"></div>
-      <div class="field"><label>First destination</label><input class="input" id="av-dest"></div>
-      <div class="field"><label>First vehicle type</label><input class="input" id="av-vehicle"></div>
-      <div class="field"><label>Payload / weight</label><input class="input" id="av-weight" placeholder="e.g. 20 Ton"></div>
-      <div class="field"><label>Base rate (PKR)</label><input class="input num" id="av-rate" type="number" min="0" step="1"></div>
+      <div class="field"><label for="av-valid-from">Valid from <span class="muted">· optional</span></label>${dateField('av-valid-from')}</div>
+      <div class="field"><label for="av-valid-to">Valid to <span class="muted">· optional</span></label>${dateField('av-valid-to')}</div>
+      <div class="field"><label for="av-dest">First destination</label><input class="input" id="av-dest"></div>
+      <div class="field"><label for="av-vehicle">First vehicle type</label><input class="input" id="av-vehicle"></div>
+      <div class="field"><label for="av-weight">Payload / weight</label><input class="input" id="av-weight" placeholder="e.g. 20 Ton"></div>
+      <div class="field"><label for="av-rate">Base rate (PKR) <span class="muted">· optional</span></label><input class="input num" id="av-rate" type="number" min="0" step="1"></div>
     </div>
     <div id="av-error" class="inline-error" hidden></div>
     <div class="dialog-actions">
       <button class="btn btn-secondary" id="dlg-cancel">Cancel</button>
-      <button class="btn btn-primary" id="dlg-confirm">Add vendor</button>
+      <button class="btn btn-primary" id="dlg-confirm">Send for approval</button>
     </div>
   `);
-  document.getElementById('dlg-cancel').addEventListener('click', closeDialog);
-  document.getElementById('dlg-confirm').addEventListener('click', async () => {
-    const errorEl = document.getElementById('av-error');
-    try {
-      const validFrom = document.getElementById('av-valid-from').value;
-      const validTo = document.getElementById('av-valid-to').value;
-      await adminApi.addVendor({
-        name: document.getElementById('av-name').value,
-        annexure: document.getElementById('av-annexure').value,
-        passThroughPct: document.getElementById('av-pass').value,
-        roundingRule: document.getElementById('av-round').value,
-        validityStart: validFrom ? isoToDisplayDate(validFrom) : '',
-        validityEnd: validTo ? isoToDisplayDate(validTo) : '',
-        firstDestination: document.getElementById('av-dest').value,
-        firstVehicleType: document.getElementById('av-vehicle').value,
-        firstWeight: document.getElementById('av-weight').value,
-        firstBaseRate: document.getElementById('av-rate').value,
-      });
-      closeDialog();
-      toast('Vendor added.', 'success');
-      load(container);
-    } catch (err) {
-      errorEl.textContent = err.message || 'Could not add vendor.';
-      errorEl.hidden = false;
-    }
+  const val = (id) => document.getElementById(id).value;
+  wireRequestDialog({
+    kind: 'add_vendor',
+    errorId: 'av-error',
+    onDone,
+    successText: 'The vendor appears here once approved.',
+    collect() {
+      for (const [id, label] of [['av-valid-from', 'Valid from'], ['av-valid-to', 'Valid to']]) {
+        if (val(id) && !isValidDisplayDate(val(id))) throw codedError('MD-003', `Enter "${label}" as DD.MM.YYYY.`, label);
+      }
+      return {
+        payload: {
+          name: val('av-name'),
+          annexure: val('av-annexure'),
+          passThroughPct: val('av-pass'),
+          roundingRule: val('av-round'),
+          validityStart: val('av-valid-from'),
+          validityEnd: val('av-valid-to'),
+          firstDestination: val('av-dest'),
+          firstVehicleType: val('av-vehicle'),
+          firstWeight: val('av-weight'),
+          firstBaseRate: val('av-rate'),
+        },
+      };
+    },
   });
 }
 
-function openAddDestinationDialog(vendorId, sheet, onChanged) {
+function openAddDestinationDialog(vendorId, sheet, onDone) {
   openDialog(`
-    <div class="dialog-title">Add destination · ${escapeHtml(sheet.title)}</div>
-    <div class="field"><label>Destination</label><input class="input" id="ad-dest"></div>
+    <div class="dialog-title">Request new destination · ${escapeHtml(sheet.title)}</div>
+    ${APPROVAL_NOTE}
+    <div class="field"><label for="ad-dest">Destination</label><input class="input" id="ad-dest"></div>
     ${sheet.cols.map((c, i) => `
-      <div class="field"><label>Base rate · ${escapeHtml(c)}</label><input class="input num" id="ad-rate-${i}" type="number" min="0" step="1"></div>
+      <div class="field"><label for="ad-rate-${i}">Base rate · ${escapeHtml(c)} <span class="muted">· optional</span></label><input class="input num" id="ad-rate-${i}" type="number" min="0" step="1"></div>
     `).join('')}
     <div id="ad-error" class="inline-error" hidden></div>
     <div class="dialog-actions">
       <button class="btn btn-secondary" id="dlg-cancel">Cancel</button>
-      <button class="btn btn-primary" id="dlg-confirm">Add destination</button>
+      <button class="btn btn-primary" id="dlg-confirm">Send for approval</button>
     </div>
   `);
-  document.getElementById('dlg-cancel').addEventListener('click', closeDialog);
-  document.getElementById('dlg-confirm').addEventListener('click', async () => {
-    const errorEl = document.getElementById('ad-error');
-    const destination = document.getElementById('ad-dest').value;
-    const baseRates = sheet.cols.map((_, i) => document.getElementById(`ad-rate-${i}`).value);
-    try {
-      await adminApi.addDestination(vendorId, { destination, baseRates });
-      closeDialog();
-      toast('Destination added.', 'success');
-      onChanged();
-    } catch (err) {
-      errorEl.textContent = err.message || 'Could not add destination.';
-      errorEl.hidden = false;
-    }
+  wireRequestDialog({
+    kind: 'add_destination',
+    errorId: 'ad-error',
+    onDone,
+    successText: 'The destination is added to the rate sheet once approved.',
+    collect: () => ({
+      payload: {
+        vendorId,
+        destination: document.getElementById('ad-dest').value,
+        baseRates: sheet.cols.map((_, i) => document.getElementById(`ad-rate-${i}`).value),
+      },
+    }),
+  });
+}
+
+function openAddVehicleTypeDialog(vendorId, sheet, onDone) {
+  openDialog(`
+    <div class="dialog-title">Request new vehicle type · ${escapeHtml(sheet.title)}</div>
+    ${APPROVAL_NOTE}
+    <div class="grid-2">
+      <div class="field"><label for="avt-name">Vehicle type</label><input class="input" id="avt-name" placeholder="e.g. 22ft Container"></div>
+      <div class="field"><label for="avt-weight">Payload / weight</label><input class="input" id="avt-weight" placeholder="e.g. 25 Ton"></div>
+    </div>
+    <div class="hd" style="margin-top:6px">Base rate per destination <span style="text-transform:none;letter-spacing:0">· optional — leave blank to enter at the next revision</span></div>
+    <div style="max-height:40vh;overflow-y:auto;margin-top:8px;padding-right:4px">
+      ${sheet.rows.map((row, i) => `
+        <div class="row-gap" style="justify-content:space-between;margin-bottom:6px">
+          <label for="avt-rate-${i}" style="font-size:13px;flex:1">${escapeHtml(row[0])}</label>
+          <input class="input num" id="avt-rate-${i}" type="number" min="0" step="1" style="width:130px">
+        </div>
+      `).join('')}
+    </div>
+    <div id="avt-error" class="inline-error" hidden></div>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" id="dlg-cancel">Cancel</button>
+      <button class="btn btn-primary" id="dlg-confirm">Send for approval</button>
+    </div>
+  `);
+  wireRequestDialog({
+    kind: 'add_vehicle_type',
+    errorId: 'avt-error',
+    onDone,
+    successText: 'The new column is added to the rate sheet once approved.',
+    collect: () => ({
+      payload: {
+        vendorId,
+        vehicleType: document.getElementById('avt-name').value,
+        weight: document.getElementById('avt-weight').value,
+        baseRates: sheet.rows.map((_, i) => document.getElementById(`avt-rate-${i}`).value),
+      },
+    }),
+  });
+}
+
+function openDeleteDialog({ title, body, kind, payload, onDone }) {
+  openDialog(`
+    <div class="dialog-title">${escapeHtml(title)}</div>
+    <div class="dialog-body">${body}</div>
+    ${APPROVAL_NOTE}
+    <div class="field"><label for="del-reason">Reason for deletion · required</label><textarea class="input" id="del-reason" placeholder="e.g. contract ended on 30.06.2026"></textarea></div>
+    <div id="del-error" class="inline-error" hidden></div>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" id="dlg-cancel">Cancel</button>
+      <button class="btn btn-primary" id="dlg-confirm">Send for approval</button>
+    </div>
+  `);
+  wireRequestDialog({
+    kind,
+    errorId: 'del-error',
+    onDone,
+    successText: 'It stays in place until approved.',
+    collect() {
+      const reason = document.getElementById('del-reason').value.trim();
+      if (!reason) throw codedError('CR-004', 'Enter a reason for the deletion — the approver needs it to decide.', 'Reason for deletion');
+      return { payload, reason };
+    },
   });
 }

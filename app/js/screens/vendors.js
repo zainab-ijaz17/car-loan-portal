@@ -1,8 +1,9 @@
 import { getVendors } from '../api/vendorsApi.js';
 import { getDraft, updateDraft } from '../revisionDraft.js';
-import { withAsyncState, escapeHtml, toast, isoToDisplayDate, displayToIsoDate } from '../ui.js';
+import { returnedNoticeHtml } from '../components/returnedNotice.js';
+import { withAsyncState, escapeHtml, trimNum, isValidDisplayDate, dateField, wireDateFields, codedError, toastError } from '../ui.js';
 
-export const title = 'Screen 2 · Select Vendors';
+export const title = 'Select Vendors';
 
 export function mount(container) {
   const draft = getDraft();
@@ -19,16 +20,21 @@ export function mount(container) {
 }
 
 function render(container, draft, vendors) {
-  const selected = new Set(draft.vendorIds.length ? draft.vendorIds : vendors.map((v) => v.id));
+  // Filtered to vendors that still exist — one could have been deleted
+  // since this draft (or the returned revision it came from) was made.
+  const selected = new Set(
+    (draft.vendorIds.length ? draft.vendorIds : vendors.map((v) => v.id)).filter((id) => vendors.some((v) => v.id === id))
+  );
 
   container.innerHTML = `
     <div style="max-width:1180px">
+      ${draft.returnedFrom ? `<div style="margin-bottom:22px">${returnedNoticeHtml(draft.returnedFrom, { compact: true })}</div>` : ''}
       <h3 style="margin-bottom:3px">Select vendors</h3>
       <p class="muted" style="font-size:13px">Only checked contracts are simulated and repriced.</p>
 
       <div class="field" style="width:220px;margin-top:18px">
         <label for="rate-effective-from">Rates effective from</label>
-        <input class="input num" id="rate-effective-from" type="date" required>
+        ${dateField('rate-effective-from', { value: draft.effectiveDate || draft.dieselEffectiveDate })}
       </div>
 
       <table class="table" style="margin-top:18px">
@@ -54,7 +60,7 @@ function render(container, draft, vendors) {
   const toggleAll = container.querySelector('#toggle-all');
   const summaryEl = container.querySelector('#sel-summary');
   const rateEffectiveFrom = container.querySelector('#rate-effective-from');
-  rateEffectiveFrom.value = displayToIsoDate(draft.effectiveDate || draft.dieselEffectiveDate);
+  wireDateFields(container);
 
   function rowHtml(v) {
     return `
@@ -65,7 +71,7 @@ function render(container, draft, vendors) {
           ${v.stale ? '<span class="tag tag-outline" style="margin-left:8px;font-size:10px">not revised 90+ days</span>' : ''}
         </td>
         <td class="num">${escapeHtml(v.annexure)}</td>
-        <td class="num" style="text-align:right">${v.passThroughPct.toFixed(2)}</td>
+        <td class="num" style="text-align:right">${trimNum(v.passThroughPct)}</td>
         <td>${escapeHtml(v.roundingRule)}</td>
         <td class="num" style="text-align:right">${v.rateLineCount}</td>
         <td class="num" style="text-align:right">${escapeHtml(v.lastRevisedDate)}</td>
@@ -104,14 +110,14 @@ function render(container, draft, vendors) {
 
   container.querySelector('#run-sim').addEventListener('click', () => {
     if (selected.size === 0) {
-      toast('Select at least one vendor to simulate.', 'error');
+      toastError(codedError('VND-001', 'Select at least one vendor to simulate.', 'Vendor list'));
       return;
     }
-    if (!rateEffectiveFrom.value) {
-      toast('Enter the date the new rates take effect.', 'error');
+    if (!isValidDisplayDate(rateEffectiveFrom.value)) {
+      toastError(codedError('VND-002', 'Enter the date the new rates take effect as DD.MM.YYYY.', 'Rates effective from'));
       return;
     }
-    updateDraft({ vendorIds: [...selected], effectiveDate: isoToDisplayDate(rateEffectiveFrom.value) });
+    updateDraft({ vendorIds: [...selected], effectiveDate: rateEffectiveFrom.value });
     location.hash = '#/review';
   });
 }

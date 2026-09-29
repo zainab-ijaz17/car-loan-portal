@@ -1,9 +1,10 @@
 import { simulateRevision, submitForApproval } from '../api/revisionsApi.js';
-import { getDraft, clearDraft } from '../revisionDraft.js';
+import { getDraft, clearDraft, updateDraft } from '../revisionDraft.js';
 import { getSession } from '../session.js';
-import { withAsyncState, escapeHtml, money, pct, toast } from '../ui.js';
+import { returnedNoticeHtml } from '../components/returnedNotice.js';
+import { withAsyncState, escapeHtml, money, pct, toast, toastError, downloadCsv } from '../ui.js';
 
-export const title = 'Screen 3 · Review Before / After';
+export const title = 'Review Before / After';
 
 export function mount(container) {
   const draft = getDraft();
@@ -15,9 +16,9 @@ export function mount(container) {
   const controller = new AbortController();
   // { [vendorId]: { [rowIndex]: { [colIndex]: number } } } — rates typed
   // directly for lines with no base rate on file yet (see rateEngine.js's
-  // computeWorksheet). Scoped to this screen instance: going back to
-  // vendor selection and forward again starts fresh.
-  const overrides = {};
+  // computeWorksheet). Kept on the draft, so they survive going back a
+  // step — and come pre-filled when a returned revision is reopened.
+  const overrides = structuredClone(draft.overrides || {});
 
   function load() {
     const loader = () => simulateRevision({
@@ -60,7 +61,7 @@ function worksheetTable(sheet) {
           ${groupHeader('Base rate · previous revision')}<th style="width:10px"></th>
           ${groupHeader('Increase in PKR')}<th style="width:10px"></th>
           ${groupHeader('Sum with increase')}<th style="width:10px"></th>
-          ${groupHeader('New rates · rounded', 'var(--color-accent-300)')}<th style="width:10px"></th>
+          ${groupHeader('New rates · rounded', 'var(--color-positive)')}<th style="width:10px"></th>
           ${groupHeader('Balancing')}
         </tr>
         <tr>
@@ -85,7 +86,7 @@ function worksheetTable(sheet) {
             ${r.sum.map((v) => `<td class="num" style="text-align:right;color:color-mix(in srgb,var(--color-text) 70%,transparent)">${cell(v, 'sum')}</td>`).join('')}
             <td></td>
             ${r.rounded.map((v, j) => `
-              <td class="num" style="text-align:right;font-weight:600">
+              <td class="num pos" style="text-align:right;font-weight:600">
                 ${r.base[j] == null
                   ? `<input class="cell-in num" style="text-align:right;width:90px" type="number" min="0" step="1" placeholder="new rate" value="${v == null ? '' : v}" data-row="${i}" data-col="${j}">`
                   : cell(v, 'rounded')}
@@ -106,14 +107,14 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
 
   container.innerHTML = `
     <div class="screen-wide">
+      ${draft.returnedFrom ? `<div style="margin-bottom:22px">${returnedNoticeHtml(draft.returnedFrom, { compact: true })}</div>` : ''}
       <h3 style="margin-bottom:3px">Review before / after</h3>
       <p class="muted" style="font-size:13px">Nothing is written to the ledger until an approver releases it.</p>
 
       <div class="grid-4" style="margin:22px 0 6px">
         <div><div class="hd">Vendors selected</div><div class="num" style="font-size:40px;line-height:1.1">${sim.totals.vendorCount}</div></div>
         <div><div class="hd">Rate lines affected</div><div class="num" style="font-size:40px;line-height:1.1">${sim.totals.rateLineCount}</div></div>
-        <div><div class="hd">Diesel price change</div><div class="num" style="font-size:40px;line-height:1.1;color:var(--color-accent-300)">${pct(sim.overallUpliftPct)}</div></div>
-        <div><div class="hd">Total cost impact</div><div class="num" style="font-size:40px;line-height:1.1;color:var(--color-accent-300)">+PKR ${money(Math.round(sim.totals.totalIncreasePkr))}</div></div>
+        <div><div class="hd">Diesel price change</div><div class="num" style="font-size:40px;line-height:1.1">${pct(sim.overallUpliftPct)}</div></div>
       </div>
 
       <div id="blocked-banner"></div>
@@ -126,7 +127,7 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
         </div>
         <div class="row-gap" style="align-items:baseline;padding-bottom:7px">
           <span class="hd">Uplift factor</span>
-          <span class="num" style="font-size:17px;color:var(--color-accent-300)" id="uplift-factor"></span>
+          <span class="num" style="font-size:17px" id="uplift-factor"></span>
         </div>
       </div>
 
@@ -147,7 +148,7 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
     container.querySelector('#blocked-banner').innerHTML = `
       <div class="error-banner">
         <span class="error-banner-dot">●</span>
-        <span>One or more rate lines have no rate on file — their balancing column reads <span class="num">!</span>. Type a rate for each under "New rates · rounded" to resolve it before submitting.</span>
+        <span>These vendors have rate lines with no rate on file: ${escapeHtml(sim.vendors.filter((v) => v.blocked).map((v) => v.name).join(', '))}. Their balancing column reads <span class="num">!</span> — type a rate for each under "New rates · rounded" before submitting.<span class="error-ref">Error REV-002 · Review before / after › New rates</span></span>
       </div>
     `;
   }
@@ -161,7 +162,7 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
     activeVendorId = vendorId;
     const v = sim.vendors.find((v) => v.id === vendorId);
     const sheet = sim.worksheets[vendorId];
-    upliftFactorEl.textContent = pct(v.upliftPct, 4);
+    upliftFactorEl.textContent = pct(v.upliftPct);
     sheetHeaderEl.innerHTML = `
       <div style="font-family:var(--font-heading);font-size:17px">${escapeHtml(sheet.title)}</div>
       <div style="font-size:12.5px;color:color-mix(in srgb,var(--color-text) 65%,transparent)">Annexure ${escapeHtml(sheet.annexure)}</div>
@@ -179,6 +180,7 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
     overrides[activeVendorId] = overrides[activeVendorId] || {};
     overrides[activeVendorId][row] = overrides[activeVendorId][row] || {};
     overrides[activeVendorId][row][col] = e.target.value;
+    updateDraft({ overrides });
     reresimulate();
   });
 
@@ -192,14 +194,12 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
       });
       render(container, draft, newSim, overrides, reload, activeVendorId);
     } catch (err) {
-      toast(err.message || 'Could not recompute.', 'error');
+      toastError(err, 'Could not recompute.');
     }
   }
 
   container.querySelector('#back-btn').addEventListener('click', () => { location.hash = '#/vendors'; });
-  container.querySelector('#export-btn').addEventListener('click', () => {
-    toast('Export to Excel isn’t available yet.', 'info');
-  });
+  container.querySelector('#export-btn').addEventListener('click', () => exportCsv(sim));
 
   const submitBtn = container.querySelector('#submit-btn');
   submitBtn.addEventListener('click', async () => {
@@ -211,7 +211,6 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
         dieselPrice: draft.dieselPrice,
         dieselEffectiveDate: draft.dieselEffectiveDate,
         effectiveDate: draft.effectiveDate,
-        fuelType: draft.fuelType,
         source: draft.source,
         notificationId: draft.notificationId,
         notificationFileName: draft.notificationFileName,
@@ -224,9 +223,22 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
       toast(`Revision ${result.revisionNo} submitted for approval.`, 'success');
       location.hash = '#/diesel-price';
     } catch (err) {
-      toast(err.message || 'Submission failed.', 'error');
+      toastError(err, 'Submission failed.');
       submitBtn.disabled = false;
       submitBtn.textContent = 'Submit for Approval';
     }
   });
+}
+
+// Every selected vendor's before/after lines, one row per rate line.
+function exportCsv(sim) {
+  const rows = [['Vendor', 'Annexure', 'Destination', 'Vehicle type', 'Base rate', 'Increase (PKR)', 'Sum with increase', 'New rate (rounded)']];
+  sim.vendors.forEach((v) => {
+    const sheet = sim.worksheets[v.id];
+    sheet.rows.forEach((r) => sheet.cols.forEach((c, j) => {
+      const whole = (x) => (x == null ? '' : Math.round(x));
+      rows.push([v.name, sheet.annexure, r.dest, c, whole(r.base[j]), whole(r.inc[j]), whole(r.sum[j]), whole(r.rounded[j])]);
+    }));
+  });
+  downloadCsv(`Revision ${sim.revisionNo} - before and after (${sim.effectiveDate}).csv`, rows);
 }
