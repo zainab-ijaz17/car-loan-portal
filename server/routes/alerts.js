@@ -1,23 +1,20 @@
 // In-app notifications for the bell in the top bar — see
-// app/js/components/alerts.js. `role` is the role the user picked for this
-// session; role-wide notifications are only returned for a role the
-// roster (roles.js) actually gives them.
+// app/js/components/alerts.js. Role-wide notifications are shown for the
+// role this session signed in with.
 const express = require('express');
 const { pool } = require('../db');
 const { requireActor } = require('../middleware/auth');
-const { hasAssignedRole } = require('../roles');
 const { fail, handle } = require('../errors');
 
 const router = express.Router();
 
 function audience(req) {
-  const role = req.query.role || req.body?.role;
-  return { employeeId: req.actor.employeeId, role: role && hasAssignedRole(req.actor.employeeId, role) ? role : null };
+  return { employeeId: req.actor.employeeId, role: req.actor.role };
 }
 
 const VISIBLE = `(recipient_employee_id = $1 OR (recipient_role = $2 AND actor_employee_id IS DISTINCT FROM $1))`;
 
-// GET /alerts?role=
+// GET /alerts
 router.get('/alerts', requireActor, handle('loading notifications', async (req, res) => {
   const { employeeId, role } = audience(req);
   const { rows } = await pool.query(
@@ -44,7 +41,7 @@ router.post('/alerts/:id/read', requireActor, handle('marking the notification a
   res.json({ ok: true });
 }));
 
-// POST /alerts/read-all  { role }
+// POST /alerts/read-all
 router.post('/alerts/read-all', requireActor, handle('marking notifications as read', async (req, res) => {
   const { employeeId, role } = audience(req);
   await pool.query(

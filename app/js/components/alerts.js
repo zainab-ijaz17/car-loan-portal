@@ -26,7 +26,7 @@ async function refresh() {
   const session = getSession();
   if (!session) return;
   try {
-    state = await getAlerts(session.role);
+    state = await getAlerts();
   } catch {
     return; // the bell just keeps its last state; screens surface real errors
   }
@@ -73,13 +73,13 @@ function render(open = isOpen()) {
   });
   panel.addEventListener('click', (e) => e.stopPropagation());
   slot.querySelector('.alerts-readall')?.addEventListener('click', async () => {
-    await markAllRead(getSession()?.role).catch(() => {});
+    await markAllRead().catch(() => {});
     await refresh();
   });
   panel.querySelectorAll('.alert-item').forEach((el) => {
     el.addEventListener('click', () => {
       panel.hidden = true;
-      markRead(el.dataset.id, getSession()?.role).then(refresh).catch(() => {});
+      markRead(el.dataset.id).then(refresh).catch(() => {});
       if (el.dataset.link) location.hash = el.dataset.link;
     });
   });

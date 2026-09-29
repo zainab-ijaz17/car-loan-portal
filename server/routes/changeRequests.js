@@ -30,7 +30,7 @@ function toApi(r) {
 }
 
 // GET /master-data/requests?status=pending
-router.get('/master-data/requests', requireActor, handle('loading master data requests', async (req, res) => {
+router.get('/master-data/requests', requireActor, requireRole('Administrator', 'Approver'), handle('loading master data requests', async (req, res) => {
   const { status } = req.query;
   const result = status
     ? await pool.query('SELECT * FROM change_requests WHERE status = $1 ORDER BY requested_at DESC LIMIT 200', [status])

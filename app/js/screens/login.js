@@ -1,4 +1,4 @@
-import { login } from '../api/authApi.js';
+import { login, chooseRole } from '../api/authApi.js';
 import { setSession } from '../session.js';
 import { defaultRouteForSession } from '../router.js';
 import { escapeHtml, showInlineError } from '../ui.js';
@@ -50,10 +50,10 @@ function renderCredentialsStep(container, controller) {
 
     try {
       const profile = await login(employeeId, password);
-      if (profile.roles.length > 1) {
-        renderRoleChoiceStep(container, controller, profile, password);
+      if (!profile.activeRole) {
+        renderRoleChoiceStep(container, controller, profile);
       } else {
-        setSession({ employeeId: profile.employeeId, name: profile.name, role: profile.roles[0], password });
+        setSession({ employeeId: profile.employeeId, name: profile.name, role: profile.activeRole, token: profile.token });
         location.hash = defaultRouteForSession();
       }
     } catch (err) {
@@ -67,7 +67,7 @@ function renderCredentialsStep(container, controller) {
 // Accounts with more than one assigned role (see server/roles.js) pick
 // which one to use for the session here, since everything downstream
 // (router.js's route guards, session.hasRole) works off a single active role.
-function renderRoleChoiceStep(container, controller, profile, password) {
+function renderRoleChoiceStep(container, controller, profile) {
   container.innerHTML = `
     <div class="login-page">
       <form class="login-card card elev-md" id="role-form" style="padding:28px">
@@ -82,6 +82,7 @@ function renderRoleChoiceStep(container, controller, profile, password) {
               ${profile.roles.map((r) => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
             </select>
           </div>
+          <div id="role-error" class="inline-error" hidden></div>
           <button class="btn btn-primary btn-block" type="submit">Continue</button>
         </div>
       </form>
@@ -89,9 +90,14 @@ function renderRoleChoiceStep(container, controller, profile, password) {
   `;
 
   const form = container.querySelector('#role-form');
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    setSession({ employeeId: profile.employeeId, name: profile.name, role: form.role.value, password });
-    location.hash = defaultRouteForSession();
+    try {
+      await chooseRole(profile.token, form.role.value);
+      setSession({ employeeId: profile.employeeId, name: profile.name, role: form.role.value, token: profile.token });
+      location.hash = defaultRouteForSession();
+    } catch (err) {
+      showInlineError(container.querySelector('#role-error'), err, 'Could not set the role.');
+    }
   }, { signal: controller.signal });
 }

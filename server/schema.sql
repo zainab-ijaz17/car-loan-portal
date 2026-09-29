@@ -132,3 +132,26 @@ CREATE TABLE IF NOT EXISTS change_requests (
   decided_at TIMESTAMPTZ,
   decision_note TEXT
 );
+
+-- Signed-in sessions. Login (routes/auth.js) checks the password against
+-- SuccessFactors once and issues a random token; every later request
+-- sends that token, and only its SHA-256 hash is stored here. The role
+-- picked at login (active_role) is what every route's role check uses.
+-- Sessions end after IDLE/MAX limits in server/sessions.js, or on logout.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  roles JSONB NOT NULL,
+  active_role TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+-- Notification files are kept in the database itself: the app's own disk
+-- (Cloud Foundry) is wiped on every restart/restage. stored_name is only
+-- set for files uploaded before this change, which still live on disk.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS content BYTEA;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS mime_type TEXT;
+ALTER TABLE notifications ALTER COLUMN stored_name DROP NOT NULL;

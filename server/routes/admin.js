@@ -1,6 +1,6 @@
 const express = require('express');
 const { withDb, withTransaction } = require('../store');
-const { requireActor } = require('../middleware/auth');
+const { requireActor, requireRole } = require('../middleware/auth');
 const { rateLineCount, vendorById } = require('../rateEngine');
 const { validateAgreementTerms, checkValidityOrder, parseRates, findRow } = require('../masterData');
 const { fail, handle } = require('../errors');
@@ -21,12 +21,12 @@ function withMeta(db, v) {
 }
 
 // GET /admin/vendors — see app/js/api/adminApi.js
-router.get('/admin/vendors', requireActor, handle('loading vendors', async (req, res) => {
+router.get('/admin/vendors', requireActor, requireRole('Administrator'), handle('loading vendors', async (req, res) => {
   res.json(await withDb(async (db) => db.vendors.map((v) => withMeta(db, v))));
 }));
 
 // PATCH /admin/vendors/:vendorId/agreement — see app/js/api/adminApi.js
-router.patch('/admin/vendors/:vendorId/agreement', requireActor, handle('saving the agreement', async (req, res) => {
+router.patch('/admin/vendors/:vendorId/agreement', requireActor, requireRole('Administrator'), handle('saving the agreement', async (req, res) => {
   const result = await withTransaction(async (db) => {
     const v = vendorById(db, req.params.vendorId);
     const patch = req.body || {};
@@ -47,7 +47,7 @@ router.patch('/admin/vendors/:vendorId/agreement', requireActor, handle('saving 
 }));
 
 // GET /admin/vendors/:vendorId/rate-sheet — see app/js/api/adminApi.js
-router.get('/admin/vendors/:vendorId/rate-sheet', requireActor, handle('loading the rate sheet', async (req, res) => {
+router.get('/admin/vendors/:vendorId/rate-sheet', requireActor, requireRole('Administrator'), handle('loading the rate sheet', async (req, res) => {
   res.json(await withDb(async (db) => {
     vendorById(db, req.params.vendorId);
     return db.rateSheets[req.params.vendorId];
@@ -59,7 +59,7 @@ router.get('/admin/vendors/:vendorId/rate-sheet', requireActor, handle('loading 
 // sheet (matched by name, case-insensitively) — how a maintainer actually
 // fills in rates for a vendor whose destinations exist but have no
 // numbers yet.
-router.patch('/admin/vendors/:vendorId/destinations', requireActor, handle('saving the base rates', async (req, res) => {
+router.patch('/admin/vendors/:vendorId/destinations', requireActor, requireRole('Administrator'), handle('saving the base rates', async (req, res) => {
   const { vendorId } = req.params;
   const sheet = await withTransaction(async (db) => {
     vendorById(db, vendorId);

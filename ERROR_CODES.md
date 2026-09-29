@@ -24,11 +24,13 @@ The letters say which screen or step the error came from; the text after `›` n
 
 | Code | Meaning | What to do |
 |---|---|---|
-| AUTH-001 | Not signed in / session ended | Sign in again |
+| AUTH-001 | Not signed in, or session ended (logout, 60 min inactive, or 10 h) | Sign in again |
 | AUTH-002 | Employee ID or password missing | Enter both |
 | AUTH-003 | Employee ID or password incorrect | Re-enter credentials |
 | AUTH-004 | SuccessFactors unreachable at sign in | Try again shortly |
 | AUTH-005 | Your account lacks the role this action needs | Ask for the role in `server/roles.js` |
+| AUTH-006 | Your role was removed while you were signed in | Sign in again |
+| AUTH-007 | A role was already chosen for this session | Log out and sign in to use another role |
 | DSL-001 | Diesel price missing or not above zero | Enter the price |
 | DSL-002 | Effective date not DD.MM.YYYY | Correct the date |
 | DSL-003 | Effective date earlier than the last confirmed price | Use a later date |

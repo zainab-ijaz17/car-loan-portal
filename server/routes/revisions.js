@@ -1,6 +1,6 @@
 const express = require('express');
 const { withDb, withTransaction } = require('../store');
-const { requireActor } = require('../middleware/auth');
+const { requireActor, requireRole } = require('../middleware/auth');
 const { verifyEmployeeCredentials } = require('../sfClient');
 const { buildSimulation, rateLineCount, vendorById, today, parseDMY, isValidDMY } = require('../rateEngine');
 const { fail, handle } = require('../errors');
@@ -25,14 +25,14 @@ function validateSimulationInput(payload) {
 }
 
 // POST /revisions/simulate — see app/js/api/revisionsApi.js
-router.post('/revisions/simulate', requireActor, handle('running the simulation', async (req, res) => {
+router.post('/revisions/simulate', requireActor, requireRole('Rate Maintainer'), handle('running the simulation', async (req, res) => {
   const payload = req.body || {};
   validateSimulationInput(payload);
   res.json(await withDb(async (db) => buildSimulation(db, payload)));
 }));
 
 // POST /revisions — see app/js/api/revisionsApi.js
-router.post('/revisions', requireActor, handle('submitting the revision for approval', async (req, res) => {
+router.post('/revisions', requireActor, requireRole('Rate Maintainer'), handle('submitting the revision for approval', async (req, res) => {
   const payload = req.body || {};
   const result = await withTransaction(async (db, client) => {
     if (db.pendingRevision) {
@@ -57,7 +57,7 @@ router.post('/revisions', requireActor, handle('submitting the revision for appr
       const vendorNames = sim.vendors.filter((v) => v.blocked).map((v) => v.name).join(', ');
       throw fail('REV-002', `Some rate lines have no rate yet (${vendorNames}). Type a rate for each under "New rates" before submitting.`, { field: 'New rates' });
     }
-    const submittedBy = { employeeId: req.actor.employeeId, name: payload.submittedBy?.name || req.actor.name };
+    const submittedBy = { employeeId: req.actor.employeeId, name: req.actor.name };
     // Carry the approver's earlier comments along, so whoever reviews the
     // resubmission can check they were addressed.
     const returned = db.returnedRevision;
@@ -92,7 +92,7 @@ router.post('/revisions', requireActor, handle('submitting the revision for appr
 }));
 
 // GET /revisions/pending — see app/js/api/revisionsApi.js
-router.get('/revisions/pending', requireActor, handle('loading the pending revision', async (req, res) => {
+router.get('/revisions/pending', requireActor, requireRole('Approver'), handle('loading the pending revision', async (req, res) => {
   const result = await withDb(async (db) => {
     const p = db.pendingRevision;
     if (!p) return null;
@@ -137,7 +137,7 @@ router.get('/revisions/pending', requireActor, handle('loading the pending revis
 // GET /revisions/returned — the revision an approver last sent back for
 // correction, with their comments, until a maintainer resubmits it. See
 // app/js/api/revisionsApi.js.
-router.get('/revisions/returned', requireActor, handle('loading the returned revision', async (req, res) => {
+router.get('/revisions/returned', requireActor, requireRole('Rate Maintainer'), handle('loading the returned revision', async (req, res) => {
   res.json(await withDb(async (db) => db.returnedRevision ?? null));
 }));
 
@@ -150,13 +150,15 @@ function requirePending(db, revisionNo) {
 }
 
 // POST /revisions/:revisionNo/approve — see app/js/api/revisionsApi.js
-// Re-authenticates the approver against real SuccessFactors (same check as
-// login) before writing anything, and refuses if they're also the original
-// submitter. The resulting rates are this app's own system of record —
+// The approver is whoever this session belongs to — never an ID taken
+// from the request body. Re-authenticates them against real
+// SuccessFactors (same check as login) before writing anything, and
+// refuses if they're also the original submitter. The resulting rates are this app's own system of record —
 // nothing here writes to SAP.
-router.post('/revisions/:revisionNo/approve', requireActor, handle('approving the revision', async (req, res) => {
+router.post('/revisions/:revisionNo/approve', requireActor, requireRole('Approver'), handle('approving the revision', async (req, res) => {
   const revisionNo = Number(req.params.revisionNo);
-  const { employeeId, password, name } = req.body || {};
+  const { password } = req.body || {};
+  const { employeeId, name } = req.actor;
 
   const result = await withTransaction(async (db, client) => {
     const p = requirePending(db, revisionNo);
@@ -211,7 +213,7 @@ router.post('/revisions/:revisionNo/approve', requireActor, handle('approving th
       dieselPrice: p.dieselPrice,
       effectiveDate: p.effectiveDate,
       factor: 1,
-      approvedBy: name || employeeId,
+      approvedBy: name,
       approvedOn: today(),
       notificationId: p.notificationId,
     };
@@ -226,7 +228,7 @@ router.post('/revisions/:revisionNo/approve', requireActor, handle('approving th
       actor: approver,
       kind: 'revision_approved',
       title: `Revision ${revisionNo} approved and released`,
-      body: `Approved by ${name || employeeId} · ${linesWritten} rate lines now in effect from ${p.effectiveDate}.`,
+      body: `Approved by ${name} · ${linesWritten} rate lines now in effect from ${p.effectiveDate}.`,
       link: '#/lookup',
     });
 
@@ -236,7 +238,7 @@ router.post('/revisions/:revisionNo/approve', requireActor, handle('approving th
 }));
 
 // POST /revisions/:revisionNo/reject — see app/js/api/revisionsApi.js
-router.post('/revisions/:revisionNo/reject', requireActor, handle('rejecting the revision', async (req, res) => {
+router.post('/revisions/:revisionNo/reject', requireActor, requireRole('Approver'), handle('rejecting the revision', async (req, res) => {
   const revisionNo = Number(req.params.revisionNo);
   const reason = req.body?.reason?.trim();
   const result = await withTransaction(async (db, client) => {
@@ -261,7 +263,7 @@ router.post('/revisions/:revisionNo/reject', requireActor, handle('rejecting the
 // Unlike reject, the submission is kept (as returnedRevision) together
 // with the approver's comments, so the maintainer sees exactly what to
 // change and can reopen it pre-filled instead of starting over.
-router.post('/revisions/:revisionNo/return', requireActor, handle('returning the revision for correction', async (req, res) => {
+router.post('/revisions/:revisionNo/return', requireActor, requireRole('Approver'), handle('returning the revision for correction', async (req, res) => {
   const revisionNo = Number(req.params.revisionNo);
   const reason = req.body?.reason?.trim();
   const result = await withTransaction(async (db, client) => {

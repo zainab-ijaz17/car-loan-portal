@@ -1,12 +1,10 @@
-// The logged-in user's identity, role and credentials.
+// The logged-in user's identity, role and session token.
 //
-// Kept in memory only — never written to localStorage/sessionStorage.
-// Because login is HTTP Basic Auth against SAP, the employee ID and
-// password must be resent on every request (see api/client.js), so we
-// hold them for the tab's lifetime and require signing in again after a
-// refresh. If the real SAP login endpoint later returns a session token
-// instead of validating raw credentials each call, store that token here
-// instead and stop sending the password on every request.
+// Kept in memory only — never written to localStorage/sessionStorage, so
+// a refresh means signing in again. The password is never kept: it's
+// sent once to POST /login, which returns a session token (see
+// server/sessions.js); that token is what api/client.js sends on every
+// request, and the server ends it on logout or after inactivity.
 let currentSession = null;
 
 export function setSession(session) {
@@ -21,10 +19,13 @@ export function getSession() {
   return currentSession;
 }
 
-export function getCredentials() {
-  return currentSession
-    ? { employeeId: currentSession.employeeId, password: currentSession.password }
-    : null;
+export function getToken() {
+  return currentSession?.token || null;
+}
+
+export function authHeader() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export function isAuthenticated() {

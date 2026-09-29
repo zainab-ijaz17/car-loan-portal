@@ -2,7 +2,7 @@
 // its non-mock requests through here so auth headers, error shapes and the
 // base URL only need to be right in one spot.
 import { CONFIG } from '../config.js';
-import { getCredentials, clearSession, isAuthenticated } from '../session.js';
+import { authHeader, clearSession, isAuthenticated } from '../session.js';
 
 // `code` / `where` come from the server's coded error body (see
 // server/errors.js) — "DSL-003", "Enter diesel price › Effective date" —
@@ -27,16 +27,13 @@ export class ApiError extends Error {
  * @param {object} [opts.headers] - merged over the defaults; set
  *   `Authorization` explicitly (as authApi.login does) to bypass the
  *   session credentials, e.g. while verifying a login attempt.
- * @param {boolean} [opts.skipAuth] - don't attach the session's Basic Auth
+ * @param {boolean} [opts.skipAuth] - don't attach the session token
  *   header (used for the login call itself)
  */
 export async function request(path, { method = 'GET', body, headers = {}, skipAuth = false } = {}) {
   const finalHeaders = { 'Content-Type': 'application/json', ...headers };
   if (!skipAuth && !finalHeaders.Authorization) {
-    const creds = getCredentials();
-    if (creds) {
-      finalHeaders.Authorization = 'Basic ' + btoa(`${creds.employeeId}:${creds.password}`);
-    }
+    Object.assign(finalHeaders, authHeader());
   }
 
   let res;
@@ -59,8 +56,8 @@ export async function request(path, { method = 'GET', body, headers = {}, skipAu
   }
 
   if (!res.ok) {
-    // A 401 on an authenticated call means SAP no longer accepts this
-    // session's credentials (password changed, account disabled, etc.) —
+    // A 401 on an authenticated call means the session has ended (logged
+    // out elsewhere, timed out, or the user's role was removed) —
     // drop it so the router's login gate takes over on the next render,
     // rather than leaving stale, now-unauthorized data on screen.
     if (res.status === 401 && !skipAuth && isAuthenticated()) {

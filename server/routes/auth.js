@@ -1,14 +1,17 @@
 const express = require('express');
 const { verifyEmployeeCredentials } = require('../sfClient');
 const { assignmentFor } = require('../roles');
-const { fail, sendError } = require('../errors');
+const { createSession, setActiveRole, endSession } = require('../sessions');
+const { requireActor } = require('../middleware/auth');
+const { fail, sendError, handle } = require('../errors');
 
 const router = express.Router();
 
-// POST /api/sap/login — the only backend-proxied call in this app; every
-// other api/*.js module talks to SAP directly with the user's own Basic
-// Auth credentials, but login needs to reach SuccessFactors with a
-// synthesized username (see sfClient.js), which can only live server-side.
+// POST /api/sap/login — checks the employee ID / password against SAP
+// SuccessFactors (with a synthesized username, see sfClient.js, which is
+// why this can only live server-side) and, if valid, opens a session. The
+// browser gets a token back and sends that — not the password — on every
+// later call.
 router.post('/login', async (req, res) => {
   const { employeeId, password } = req.body || {};
   if (!employeeId || !password) {
@@ -31,7 +34,31 @@ router.post('/login', async (req, res) => {
   // come from the roster in roles.js instead. `roles` is usually a single
   // value; screens/login.js prompts for a choice when there's more than one.
   const { name, roles } = assignmentFor(employeeId);
-  res.json({ employeeId, name, roles });
+  try {
+    const { token, activeRole } = await createSession({ employeeId, name, roles });
+    res.json({ token, employeeId, name, roles, activeRole });
+  } catch (err) {
+    sendError(res, err, 'starting your session');
+  }
 });
+
+// POST /api/sap/session/role  { role } — for accounts with more than one
+// role, fixes the role for this session. Allowed once per session.
+router.post('/session/role', requireActor, handle('setting your role', async (req, res) => {
+  const role = req.body?.role;
+  if (!assignmentFor(req.actor.employeeId).roles.includes(role)) {
+    throw fail('AUTH-005', `Your account does not have the ${role} role.`, { status: 403 });
+  }
+  if (!(await setActiveRole(req.token, role))) {
+    throw fail('AUTH-007', 'A role has already been chosen for this session. Log out and sign in again to use a different role.', { status: 409 });
+  }
+  res.json({ role });
+}));
+
+// POST /api/sap/logout
+router.post('/logout', requireActor, handle('signing out', async (req, res) => {
+  await endSession(req.token);
+  res.json({ ok: true });
+}));
 
 module.exports = router;

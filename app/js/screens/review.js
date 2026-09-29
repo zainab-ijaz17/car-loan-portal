@@ -1,6 +1,5 @@
 import { simulateRevision, submitForApproval } from '../api/revisionsApi.js';
 import { getDraft, clearDraft, updateDraft } from '../revisionDraft.js';
-import { getSession } from '../session.js';
 import { returnedNoticeHtml } from '../components/returnedNotice.js';
 import { withAsyncState, escapeHtml, money, pct, toast, toastError, downloadCsv } from '../ui.js';
 
@@ -206,7 +205,6 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Submitting…';
     try {
-      const session = getSession();
       const result = await submitForApproval({
         dieselPrice: draft.dieselPrice,
         dieselEffectiveDate: draft.dieselEffectiveDate,
@@ -217,7 +215,6 @@ function render(container, draft, sim, overrides, reload, preferredVendorId) {
         remarks: draft.remarks,
         vendorIds: draft.vendorIds,
         overrides,
-        submittedBy: { employeeId: session.employeeId, name: session.name },
       });
       clearDraft();
       toast(`Revision ${result.revisionNo} submitted for approval.`, 'success');

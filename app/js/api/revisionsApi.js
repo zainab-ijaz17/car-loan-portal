@@ -37,7 +37,8 @@ export async function simulateRevision(payload) {
  * Real endpoint: POST {API_BASE_URL}/revisions
  * Request: {
  *   dieselPrice, dieselEffectiveDate, effectiveDate, source, notificationId,
- *   notificationFileName, remarks, vendorIds, overrides, submittedBy: { employeeId, name }
+ *   notificationFileName, remarks, vendorIds, overrides
+ * (the submitter is taken from the session)
  * }
  * `dieselEffectiveDate` is when the fuel price itself took effect;
  * `effectiveDate` is when the revised rates take effect (Section 5's
@@ -89,16 +90,16 @@ export async function getReturnedRevision() {
  * original submitter.
  *
  * Real endpoint: POST {API_BASE_URL}/revisions/{revisionNo}/approve
- * Request:  { employeeId, password, name }
+ * Request:  { password }  // the approver is whoever this session belongs to
  * Response: { revisionNo, linesWritten, effectiveDate, closedRevisionNo, closedDate }
  */
-export async function approveAndRelease(revisionNo, credentials) {
-  return request(`/revisions/${revisionNo}/approve`, { method: 'POST', body: credentials });
+export async function approveAndRelease(revisionNo, password) {
+  return request(`/revisions/${revisionNo}/approve`, { method: 'POST', body: { password } });
 }
 
 /**
- * The actor is identified server-side via the request's own Basic Auth
- * header, same as every other authenticated endpoint.
+ * The actor is identified server-side from the session token, same as
+ * every other authenticated endpoint.
  *
  * Real endpoint: POST {API_BASE_URL}/revisions/{revisionNo}/reject
  * Request:  { reason: string }

@@ -156,11 +156,7 @@ function openPasswordDialog(container, pending) {
     const password = document.getElementById('approve-password').value;
     const errorEl = document.getElementById('approve-error');
     try {
-      const result = await approveAndRelease(pending.revisionNo, {
-        employeeId: session.employeeId,
-        password,
-        name: session.name,
-      });
+      const result = await approveAndRelease(pending.revisionNo, password);
       showSuccessDialog(container, result);
     } catch (err) {
       showInlineError(errorEl, err, 'Approval failed.');

@@ -1,31 +1,42 @@
-// Every screen below login sends the session's Basic Auth header on each
-// call (see app/js/api/client.js) the same way a real SAP passthrough
-// endpoint would expect. This app's own data (vendors/rates/revisions) only
-// needs to know *who* is calling for the audit log — the password itself is
-// only re-checked against SAP at the one place it actually matters
-// (approveAndRelease's re-auth, in routes/revisions.js).
-const { assignmentFor, hasAssignedRole } = require('../roles');
+// Every call below login sends `Authorization: Bearer <token>` — the
+// session token issued by POST /login (see server/sessions.js). Nothing
+// the browser says about who it is or which role it has is trusted: both
+// come from the session row, and the role is re-checked against the
+// roster (roles.js) on every request so removing someone's role takes
+// effect immediately rather than at their next login.
+const { assignmentFor } = require('../roles');
+const { findSession } = require('../sessions');
 const { fail, sendError } = require('../errors');
 
-function requireActor(req, res, next) {
-  const header = req.headers.authorization;
-  const decoded = header?.startsWith('Basic ') ? Buffer.from(header.slice('Basic '.length), 'base64').toString('utf8') : '';
-  const sep = decoded.indexOf(':');
-  const employeeId = sep === -1 ? decoded : decoded.slice(0, sep);
-  if (!employeeId) {
-    return sendError(res, fail('AUTH-001', 'Sign in required. Your session may have ended — sign in again.', { status: 401 }));
+async function requireActor(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+  if (!token) {
+    return sendError(res, fail('AUTH-001', 'Sign in required.', { status: 401 }));
   }
-  req.actor = { employeeId, name: assignmentFor(employeeId).name };
+  let session;
+  try {
+    session = await findSession(token);
+  } catch (err) {
+    return sendError(res, err, 'checking your session');
+  }
+  if (!session) {
+    return sendError(res, fail('AUTH-001', 'Your session has ended (signed out, or inactive for too long). Sign in again.', { status: 401 }));
+  }
+  if (session.active_role && !assignmentFor(session.employee_id).roles.includes(session.active_role)) {
+    return sendError(res, fail('AUTH-006', `Your account no longer has the ${session.active_role} role. Sign in again.`, { status: 401 }));
+  }
+  req.token = token;
+  req.actor = { employeeId: session.employee_id, name: session.name, role: session.active_role };
   next();
 }
 
-// Checked against the roster in roles.js, not the role the client says it
-// picked — so a request can't be raised or approved just by calling the
-// API directly with a different role.
-function requireRole(role) {
+// The role the user signed in with for this session must be one of `roles`.
+function requireRole(...roles) {
   return (req, res, next) => {
-    if (!hasAssignedRole(req.actor.employeeId, role)) {
-      return sendError(res, fail('AUTH-005', `This action needs the ${role} role, which your account does not have.`, { status: 403 }));
+    if (!roles.includes(req.actor.role)) {
+      const signedInAs = req.actor.role ? `You are signed in as ${req.actor.role}.` : 'Choose a role first.';
+      return sendError(res, fail('AUTH-005', `This action needs the ${roles.join(' or ')} role. ${signedInAs}`, { status: 403 }));
     }
     next();
   };

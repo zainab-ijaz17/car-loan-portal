@@ -1,12 +1,12 @@
 const express = require('express');
 const { withDb } = require('../store');
-const { requireActor } = require('../middleware/auth');
+const { requireActor, requireRole } = require('../middleware/auth');
 const { handle } = require('../errors');
 
 const router = express.Router();
 
 // GET /diesel-price/current — see app/js/api/dieselApi.js
-router.get('/diesel-price/current', requireActor, handle('loading the current diesel price', async (req, res) => {
+router.get('/diesel-price/current', requireActor, requireRole('Rate Maintainer'), handle('loading the current diesel price', async (req, res) => {
   const result = await withDb(async (db) => {
     const rev = db.revisions[db.currentRevisionNo];
     return {
